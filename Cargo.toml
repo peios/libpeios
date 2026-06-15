@@ -1,0 +1,36 @@
+[package]
+name = "libpeios"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Peios userspace C ABI library"
+
+[lib]
+# Produces libpeios.so (cdylib) and libpeios.a (staticlib).
+name = "peios"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+# Shared C-ABI substrate: the global allocator, the errno slot, the syscall/ioctl
+# wrappers, and the getxattr/builder helpers (also consumed by librsi).
+peios-cabi = { git = "https://github.com/peios/peios-cabi.git" }
+# Generated Rust mirror of the PKM kernel ABI (constants + #[repr(C)] structs) —
+# the Rust analog of `#include <pkm/*.h>`. no_std, definitions only.
+peios-uapi = { git = "https://github.com/peios/pkm.git", default-features = false }
+# The shared "pkm-core": SID / SD / ACL / ACE parse + evaluate vocabulary, run
+# identically here and in the kernel. Default features = no_std + alloc (the
+# `kernel` feature is left off for the userspace build).
+kacs-core = { git = "https://github.com/peios/pkm.git" }
+# Raw libc FFI for the `errno` constants the entry points report and the `abort`
+# in the panic handler. no_std.
+libc = { version = "0.2", default-features = false }
+
+# Nothing may unwind across the C ABI boundary.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+
+# libpeios is its own workspace root (the kernel crates live in pkm/'s workspace).
+[workspace]

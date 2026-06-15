@@ -1,0 +1,14 @@
+[env]
+TC = "$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin"
+PATH = "$TC:$PATH"
+CARGO = "$TC/cargo"
+RUSTC = "$TC/rustc"
+
+[build]
+command = "cargo build --release"
+
+[test]
+command = "cargo test"
+
+[clean]
+command = "cargo clean"
