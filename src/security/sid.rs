@@ -261,8 +261,14 @@ pub unsafe extern "C" fn peios_sid_valid(sid: *const c_void, len: usize) -> bool
 
 /// `peios_sid_length` — encoded length from the sub-authority count byte.
 ///
-/// Unvalidated by contract: the caller must have validated `sid` or bounded it
-/// to `PEIOS_SID_MAX_BYTES`.
+/// Unlike the other inspectors this takes no length: it reads only the
+/// sub-authority-count byte at offset 1 and returns `8 + 4 * count`, never
+/// touching the sub-authority data.
+///
+/// # Safety
+/// `sid` must be NULL or point to at least 2 readable bytes (the SID revision and
+/// sub-authority-count bytes). The caller is responsible for having validated
+/// `sid` (e.g. via [`peios_sid_valid`]) or bounded it to `PEIOS_SID_MAX_BYTES`.
 #[no_mangle]
 pub unsafe extern "C" fn peios_sid_length(sid: *const c_void) -> usize {
     if sid.is_null() {

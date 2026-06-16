@@ -39,11 +39,18 @@ pub unsafe extern "C" fn peios_token_query(
         set_errno(libc::EINVAL);
         return -1;
     }
+    // getxattr contract (see `peios_cabi::abi::emit_bytes`): `cap == 0` is a size
+    // probe and may pass a NULL buffer; a non-zero `cap` with a NULL buffer is a
+    // caller error — EINVAL, not a silent probe.
+    if cap != 0 && buf.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     let mut args = kacs_query_args {
         token_class: info_class,
         buf_len: cap as u32,
-        // A null buffer (or cap 0) leaves buf_ptr 0, which the kernel treats as a
-        // size probe — returning the required size in buf_len.
+        // `cap == 0` leaves buf_ptr 0, which the kernel treats as a size probe —
+        // returning the required size in buf_len.
         buf_ptr: buf as usize as u64,
     };
     if ioctl(fd, KACS_IOC_QUERY as c_ulong, (&mut args as *mut kacs_query_args).cast()) < 0 {

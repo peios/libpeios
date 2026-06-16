@@ -303,11 +303,14 @@ impl<'a> Cursor<'a> {
             Some(0xca) => {
                 self.pos += 1;
                 self.take(4)
-                    .map(|s| f32::from_be_bytes(s.try_into().unwrap()) as f64)
+                    .and_then(|s| s.try_into().ok())
+                    .map(|a| f32::from_be_bytes(a) as f64)
             }
             Some(0xcb) => {
                 self.pos += 1;
-                self.take(8).map(|s| f64::from_be_bytes(s.try_into().unwrap()))
+                self.take(8)
+                    .and_then(|s| s.try_into().ok())
+                    .map(f64::from_be_bytes)
             }
             _ => None,
         };
@@ -1415,5 +1418,174 @@ mod tests {
         let b = enc(|w| unsafe { peios_mp_write_raw(w, raw.as_ptr() as *const c_void, raw.len()) });
         assert_eq!(b, raw);
         assert_eq!(unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) }, 0);
+    }
+
+    // ---- Decoder hardening: hostile / truncated / oversized inputs ----
+    //
+    // The reader operates on caller-supplied (potentially untrusted) bytes, so it
+    // must reject every malformed shape with `-1`+EINVAL and never read out of
+    // bounds, abort, or advance the cursor on failure. These drive the reader API
+    // directly against raw byte buffers rather than the encoder's well-formed output.
+
+    /// Build a reader over a raw byte buffer.
+    unsafe fn reader_over(buf: &[u8]) -> peios_mp_reader {
+        let mut r = peios_mp_reader { _opaque: [0; 4] };
+        peios_mp_reader_init(&mut r, buf.as_ptr() as *const c_void, buf.len());
+        r
+    }
+
+    #[test]
+    fn reader_rejects_truncated_str_and_leaves_cursor_put() {
+        // fixstr promising 5 bytes, only 2 present.
+        let buf = [0xa5u8, b'h', b'i'];
+        unsafe {
+            let mut r = reader_over(&buf);
+            assert_eq!(peios_mp_peek(&r), MP_STR);
+            let mut out = core::ptr::null::<c_char>();
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_mp_read_str(&mut r, &mut out), -1);
+            assert_eq!(*libc::__errno_location(), libc::EINVAL);
+            assert!(out.is_null());
+            // The failed read consumed nothing — the lead byte is still there.
+            assert_eq!(peios_mp_reader_remaining(&r), buf.len());
+            assert_eq!(peios_mp_peek(&r), MP_STR);
+        }
+    }
+
+    #[test]
+    fn reader_rejects_oversized_length_prefix_without_reading_oob() {
+        // str32 declaring ~4 GiB of payload with none present.
+        let buf = [0xdbu8, 0xff, 0xff, 0xff, 0xff];
+        unsafe {
+            let mut r = reader_over(&buf);
+            let mut out = core::ptr::null::<c_char>();
+            assert_eq!(peios_mp_read_str(&mut r, &mut out), -1);
+            assert_eq!(peios_mp_reader_remaining(&r), buf.len());
+            // Same for an oversized bin32.
+            let bin = [0xc6u8, 0xff, 0xff, 0xff, 0xff];
+            let mut rb = reader_over(&bin);
+            let mut bout = core::ptr::null::<c_void>();
+            assert_eq!(peios_mp_read_bin(&mut rb, &mut bout), -1);
+            assert_eq!(peios_mp_reader_remaining(&rb), bin.len());
+        }
+    }
+
+    #[test]
+    fn reader_rejects_truncated_bin_and_ext() {
+        unsafe {
+            // bin8 len 16, one byte present.
+            let bin = [0xc4u8, 0x10, 0x00];
+            let mut rb = reader_over(&bin);
+            let mut bout = core::ptr::null::<c_void>();
+            assert_eq!(peios_mp_read_bin(&mut rb, &mut bout), -1);
+            assert_eq!(peios_mp_reader_remaining(&rb), bin.len());
+            // ext8 len 4 (so 1 type + 4 data = 5 needed), only type + 1 present.
+            let ext = [0xc7u8, 0x04, 0x01, 0xaa];
+            let mut re = reader_over(&ext);
+            let mut ty = 0i8;
+            let mut eout = core::ptr::null::<c_void>();
+            assert_eq!(peios_mp_read_ext(&mut re, &mut ty, &mut eout), -1);
+            assert_eq!(peios_mp_reader_remaining(&re), ext.len());
+        }
+    }
+
+    #[test]
+    fn max_width_headers_decode_when_well_formed() {
+        unsafe {
+            // str16 length 5.
+            let s16 = [0xdau8, 0x00, 0x05, b'h', b'e', b'l', b'l', b'o'];
+            let mut r = reader_over(&s16);
+            let mut out = core::ptr::null::<c_char>();
+            assert_eq!(peios_mp_read_str(&mut r, &mut out), 5);
+            assert_eq!(slice::from_raw_parts(out as *const u8, 5), b"hello");
+
+            // array32 of one element.
+            let a32 = [0xddu8, 0x00, 0x00, 0x00, 0x01, 0x07];
+            let mut ra = reader_over(&a32);
+            assert_eq!(peios_mp_read_array(&mut ra), 1);
+            let mut v = 0u64;
+            assert_eq!(peios_mp_read_uint(&mut ra, &mut v), 0);
+            assert_eq!(v, 7);
+
+            // map32 of one pair.
+            let m32 = [0xdfu8, 0x00, 0x00, 0x00, 0x01, 0x07, 0xc0];
+            let mut rm = reader_over(&m32);
+            assert_eq!(peios_mp_read_map(&mut rm), 1);
+            assert_eq!(peios_mp_read_uint(&mut rm, &mut v), 0);
+            assert_eq!(peios_mp_read_nil(&mut rm), 0);
+            assert_eq!(peios_mp_reader_remaining(&rm), 0);
+        }
+    }
+
+    #[test]
+    fn array_header_consumed_but_missing_elements_fail_on_read() {
+        // array32 promising 2 elements with none present: the header parses (the
+        // reader reports the count), but reading an element then fails cleanly.
+        let buf = [0xddu8, 0x00, 0x00, 0x00, 0x02];
+        unsafe {
+            let mut r = reader_over(&buf);
+            assert_eq!(peios_mp_read_array(&mut r), 2);
+            assert_eq!(peios_mp_reader_remaining(&r), 0);
+            let mut v = 0u64;
+            assert_eq!(peios_mp_read_uint(&mut r, &mut v), -1);
+            // And the whole buffer is not a valid single value.
+            assert_eq!(
+                peios_mp_validate(buf.as_ptr() as *const c_void, buf.len(), DEFAULT_DEPTH),
+                -1
+            );
+        }
+    }
+
+    #[test]
+    fn skip_handles_deep_nesting_and_restores_on_truncation() {
+        // 50 nested single-element arrays wrapping a fixint — `skip` flattens the
+        // pending count rather than recursing, so depth is bounded only by bytes.
+        let mut deep = vec![0x91u8; 50];
+        deep.push(0x00);
+        unsafe {
+            let mut r = reader_over(&deep);
+            assert_eq!(peios_mp_skip(&mut r), 0);
+            assert_eq!(peios_mp_reader_remaining(&r), 0);
+
+            // A nested array whose inner element is missing: skip fails and the
+            // cursor is left untouched.
+            let truncated = [0x91u8, 0x91];
+            let mut rt = reader_over(&truncated);
+            assert_eq!(peios_mp_skip(&mut rt), -1);
+            assert_eq!(peios_mp_reader_remaining(&rt), truncated.len());
+        }
+    }
+
+    #[test]
+    fn read_int_rejects_out_of_range_and_restores_pos() {
+        // uint64 == u64::MAX does not fit i64: read_int must fail and leave the
+        // cursor so read_uint still succeeds on the same bytes.
+        let buf = [0xcfu8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+        unsafe {
+            let mut r = reader_over(&buf);
+            let mut i = 0i64;
+            assert_eq!(peios_mp_read_int(&mut r, &mut i), -1);
+            assert_eq!(peios_mp_reader_remaining(&r), buf.len());
+            let mut u = 0u64;
+            assert_eq!(peios_mp_read_uint(&mut r, &mut u), 0);
+            assert_eq!(u, u64::MAX);
+        }
+    }
+
+    #[test]
+    fn reserved_and_empty_reads_fail() {
+        unsafe {
+            // 0xc1 is reserved — peek classifies it as invalid, reads fail.
+            let bad = [0xc1u8];
+            let mut r = reader_over(&bad);
+            assert_eq!(peios_mp_peek(&r), -1);
+            let mut v = 0u64;
+            assert_eq!(peios_mp_read_uint(&mut r, &mut v), -1);
+            // Empty buffer: peek and every read report end-of-input.
+            let empty: [u8; 0] = [];
+            let mut re = reader_over(&empty);
+            assert_eq!(peios_mp_peek(&re), -1);
+            assert_eq!(peios_mp_read_nil(&mut re), -1);
+        }
     }
 }

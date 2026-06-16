@@ -82,10 +82,19 @@ unsafe fn store(view: *mut c_void, s: &[u8]) {
 
 /// Recover the slice recorded by [`store`].
 ///
+/// A NULL `view` yields an empty slice rather than dereferencing it: every
+/// accessor re-parses what `load` returns and reports its documented sentinel on
+/// a parse failure, so an empty slice turns a NULL handle into that sentinel
+/// instead of a fault. This is the single null-guard chokepoint for the whole
+/// view-accessor surface.
+///
 /// # Safety
-/// `view` must have been populated by a successful parse and the borrowed buffer
-/// must still be alive and unmodified.
+/// A non-NULL `view` must have been populated by a successful parse and the
+/// borrowed buffer must still be alive and unmodified.
 unsafe fn load<'a>(view: *const c_void) -> &'a [u8] {
+    if view.is_null() {
+        return &[];
+    }
     let sv = (view as *const SliceView).read();
     slice::from_raw_parts(sv.ptr, sv.len)
 }

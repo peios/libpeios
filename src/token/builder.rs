@@ -125,10 +125,10 @@ struct SidAttrs {
 
 impl SidAttrs {
     fn push(&mut self, sid: &[u8], attrs: u32) -> Result<(), ()> {
-        try_extend(&mut self.data, &(sid.len() as u32).to_le_bytes())?;
+        try_extend(&mut self.data, &u32_len(sid.len()).map_err(|_| ())?.to_le_bytes())?;
         try_extend(&mut self.data, sid)?;
         try_extend(&mut self.data, &attrs.to_le_bytes())?;
-        self.count += 1;
+        self.count = self.count.checked_add(1).ok_or(())?;
         Ok(())
     }
 }
@@ -529,8 +529,16 @@ pub unsafe extern "C" fn peios_token_builder_source(
         b.latch(libc::EINVAL);
         return;
     }
-    let src = slice::from_raw_parts(name as *const u8, SOURCE_NAME_BYTES);
-    b.header[OFF_SOURCE_NAME..OFF_SOURCE_NAME + SOURCE_NAME_BYTES].copy_from_slice(src);
+    // The source name is a fixed `SOURCE_NAME_BYTES` field, but `name` is a C
+    // string: read up to that many bytes, stopping at the first NUL, and
+    // zero-pad the remainder. `cstr_bytes` bounds the scan, so a name shorter
+    // than the field never over-reads the caller's buffer; a name with no NUL
+    // in the field's width is taken verbatim (the full fixed-width name).
+    let src = cstr_bytes(name, SOURCE_NAME_BYTES)
+        .unwrap_or_else(|| slice::from_raw_parts(name as *const u8, SOURCE_NAME_BYTES));
+    let dst = &mut b.header[OFF_SOURCE_NAME..OFF_SOURCE_NAME + SOURCE_NAME_BYTES];
+    dst.fill(0);
+    dst[..src.len()].copy_from_slice(src);
     b.put_u64(OFF_SOURCE_ID, source_id);
 }
 
@@ -611,14 +619,22 @@ pub unsafe extern "C" fn peios_token_builder_supp_gids(
         return;
     }
     let gids = slice::from_raw_parts(gids, count as usize);
-    if b.supp_gids.try_reserve(gids.len() * 4).is_err() {
+    let Some(bytes) = gids.len().checked_mul(4) else {
+        b.latch(libc::EINVAL);
+        return;
+    };
+    if b.supp_gids.try_reserve(bytes).is_err() {
         b.latch(libc::ENOMEM);
         return;
     }
     for &gid in gids {
         b.supp_gids.extend_from_slice(&gid.to_le_bytes());
     }
-    b.supp_gids_count += count;
+    let Some(total) = b.supp_gids_count.checked_add(count) else {
+        b.latch(libc::EINVAL);
+        return;
+    };
+    b.supp_gids_count = total;
 }
 
 /// `peios_token_builder_flags` — set the four token-spec boolean flags.
