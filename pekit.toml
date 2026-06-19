@@ -1,11 +1,105 @@
+# libpeios — Peios's userspace C ABI library: the versioned shared object, the
+# static archive, the public headers, and split debug info.
+#
+# Self-describing source (like pkm): the build pipeline lives here and the package
+# definitions in packages.pekit/; pkgs/libpeios is a thin `delegate` pointer.
+#
+# Unlike glibc/kernel (C/Make, `make install DESTDIR=`), libpeios is a Rust cargo
+# crate — it builds libpeios.so (cdylib, soname libpeios.so.0, baked by build.rs)
+# and libpeios.a (staticlib) into target/release with NO install step. So
+# build.main stages a DESTDIR-style tree into $PEKIT_OUT by hand, and the
+# post-build debug split mirrors glibc's (debugedit -> objcopy -> strip,
+# build-id indexed), adapted for the single shared object.
+#
+# Build deps come from the surrounding shell, not declared here: a stable Rust
+# toolchain (cargo, rustc) plus binutils (objcopy, strip, readelf) and debugedit.
+
+out_dir = "out"
+
+# Toolchain: the rustup stable toolchain on the builder. Preserved from the prior
+# bare recipe — a farm shell can override PATH/CARGO/RUSTC to point elsewhere.
 [env]
 TC = "$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin"
 PATH = "$TC:$PATH"
 CARGO = "$TC/cargo"
 RUSTC = "$TC/rustc"
 
-[build]
-command = "cargo build --release"
+# Single library build -> DESTDIR tree in $PEKIT_OUT. Layout follows the peipkg
+# payload spec (PSD-009 §3.4): usrmerged, arch-specific files under
+# /usr/lib/<triplet>. The staged tree is carved by packages.pekit/ as:
+#   <triplet>/libpeios.so.0   runtime shared object (soname)  -> libpeios
+#   <triplet>/libpeios.so     dev link for -lpeios            -> libpeios-devel
+#   <triplet>/libpeios.a      static archive                  -> libpeios-static
+#   usr/include/**            public headers (peios.h + peios/*.h) -> libpeios-devel
+#   usr/lib/debug/**          split DWARF, build-id indexed    -> libpeios-debuginfo
+#   usr/src/debug/**          referenced Rust sources          -> libpeios-debugsource
+# The abi/ snapshot (a cbindgen verification artifact) and docs/ (dev markdown)
+# are deliberately NOT shipped.
+[build.main]
+command = """
+SRC="$(pwd)"
+for tool in cargo objcopy strip readelf debugedit; do
+  command -v "$tool" >/dev/null || { echo "missing required libpeios build tool: $tool" >&2; exit 1; }
+done
+
+TRIPLET=x86_64-linux-peios
+LIBDIR="usr/lib/$TRIPLET"
+
+# Build the release profile (panic=abort, set in Cargo.toml) with full DWARF
+# embedded in the .so. Debuginfo is added via env override so Cargo.toml stays
+# untouched and a plain `cargo build --release` for dev stays debug-free.
+# split-debuginfo=off keeps the DWARF INSIDE the .so so objcopy/strip can split
+# it the same way glibc splits its ELF binaries.
+CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
+  cargo build --release
+
+# Stage the DESTDIR tree.
+mkdir -p "$PEKIT_OUT/$LIBDIR" "$PEKIT_OUT/usr/include/peios"
+# The runtime .so is installed under its soname (libpeios.so.0, baked by
+# build.rs); the unversioned dev link points at it (libpeios-devel claims *.so,
+# libpeios claims *.so.* — the same split glibc uses).
+cp target/release/libpeios.so "$PEKIT_OUT/$LIBDIR/libpeios.so.0"
+ln -s libpeios.so.0 "$PEKIT_OUT/$LIBDIR/libpeios.so"
+cp target/release/libpeios.a "$PEKIT_OUT/$LIBDIR/libpeios.a"
+# Public headers — the shipping API (hand-written, with prose docs).
+cp include/peios.h "$PEKIT_OUT/usr/include/"
+cp include/peios/*.h "$PEKIT_OUT/usr/include/peios/"
+
+# --- Debug split (mirrors glibc's post-install handling) ----------------------
+# debugedit rewrites the builder's source prefix ($SRC) in the DWARF to a stable
+# /usr/src/debug/libpeios (otherwise the .debug leaks the builder's homedir and
+# source paths don't resolve on a target) and lists the sources it references;
+# -n keeps the linker's build-id note intact so the .build-id index stays valid.
+# objcopy then splits the clean DWARF into a build-id-indexed .debug and strip
+# removes it from the shipped .so. The static archive just loses its DWARF
+# (--strip-debug keeps the symtab so it still links; archive members have no
+# build-id to index, like Fedora's brp-strip-static-archive).
+so="$PEKIT_OUT/$LIBDIR/libpeios.so.0"
+debugedit -b "$SRC" -d /usr/src/debug/libpeios -l "$PEKIT_OUT/.srclist" -n "$so"
+bid=$(readelf -n "$so" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)
+if [ -n "$bid" ]; then
+  p2=$(printf %s "$bid" | cut -c1-2)
+  rest=$(printf %s "$bid" | cut -c3-)
+  mkdir -p "$PEKIT_OUT/usr/lib/debug/.build-id/$p2"
+  objcopy --only-keep-debug "$so" "$PEKIT_OUT/usr/lib/debug/.build-id/$p2/$rest.debug"
+  chmod 0644 "$PEKIT_OUT/usr/lib/debug/.build-id/$p2/$rest.debug"
+fi
+strip "$so"
+strip --strip-debug "$PEKIT_OUT/$LIBDIR/libpeios.a" 2>/dev/null || true
+
+# Stage the referenced sources under /usr/src/debug/libpeios. The list is
+# relative to $SRC (the debugedit -b base), so only libpeios's own sources
+# resolve — std / cargo-registry / toolchain paths fall outside $SRC and are
+# skipped, exactly as glibc ships only glibc sources.
+tr '\\0' '\\n' < "$PEKIT_OUT/.srclist" | sort -u | while IFS= read -r rel; do
+  [ -n "$rel" ] || continue
+  case "$rel" in */) continue;; esac
+  [ -f "$SRC/$rel" ] || continue
+  mkdir -p "$PEKIT_OUT/usr/src/debug/libpeios/$(dirname "$rel")"
+  cp "$SRC/$rel" "$PEKIT_OUT/usr/src/debug/libpeios/$rel"
+done
+rm -f "$PEKIT_OUT/.srclist"
+"""
 
 [test]
 command = "cargo test"

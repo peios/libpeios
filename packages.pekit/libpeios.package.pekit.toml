@@ -1,0 +1,21 @@
+# libpeios — runtime package: the versioned shared object (libpeios.so.0, the
+# soname baked by build.rs), loaded at runtime by anything linked against the
+# Peios C ABI. Shared metadata (format/version/arch/license/homepage) is
+# inherited from the bare package.pekit.toml; only the description and file set
+# live here.
+#
+# Sibling packages carve out the rest of the build.main tree:
+#   libpeios-devel        public headers + the unversioned *.so linker symlink
+#   libpeios-static       the static archive (*.a)
+#   libpeios-debuginfo    split DWARF (/usr/lib/debug)
+#   libpeios-debugsource  referenced Rust sources (/usr/src/debug)
+#
+# ":" = the default "main:" build. A glob source ("*.so.*") maps to a DIRECTORY.
+
+[package]
+description = "Peios userspace C ABI library - shared library"
+
+[files]
+# Versioned shared object (libpeios.so.0). The unversioned *.so link is devel's;
+# the static *.a is libpeios-static's — the same split glibc uses.
+":usr/lib/x86_64-linux-peios/*.so.*" = "usr/lib/x86_64-linux-peios/"

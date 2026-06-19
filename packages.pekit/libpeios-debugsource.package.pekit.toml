@@ -1,0 +1,16 @@
+# libpeios-debugsource — the libpeios Rust sources referenced by the debug info,
+# under /usr/src/debug/libpeios, so gdb/debuginfod can show source lines (not just
+# file:line). build.main rewrites the DWARF comp_dir to point here (debugedit) and
+# stages exactly the referenced sources.
+#
+# Pairs with libpeios-debuginfo (the symbols); depends on it since source without
+# symbols is useless.
+
+[package]
+description = "Peios userspace C ABI library - debug sources"
+
+[dependencies]
+libpeios-debuginfo = "{{version}}"
+
+[files]
+":usr/src/debug/**" = "usr/src/debug/"

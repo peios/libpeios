@@ -1,0 +1,18 @@
+# libpeios-debuginfo — separated debug symbols for libpeios.so. build.main splits
+# the DWARF out of the shared object into a build-id-indexed file under
+# /usr/lib/debug/.build-id/, which gdb/perf/debuginfod locate by the object's
+# build-id. x86_64 (inherited): DWARF is architecture-specific.
+#
+# Static-archive (*.a) debug is NOT here — libpeios.a is --strip-debug'd and its
+# DWARF discarded at build time (archive members have no build-id to index).
+
+[package]
+description = "Peios userspace C ABI library - debugging symbols"
+
+[dependencies]
+# Symbols correspond to a specific libpeios build (matched precisely by build-id
+# at debug time); pin the matching version.
+libpeios = "{{version}}"
+
+[files]
+":usr/lib/debug/**" = "usr/lib/debug/"

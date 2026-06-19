@@ -1,0 +1,12 @@
+# libpeios-static — the static archive (libpeios.a) for statically linking the
+# Peios C ABI. Inherits base metadata; depends on libpeios-devel for the headers
+# that using the archive also needs.
+
+[package]
+description = "Peios userspace C ABI library - static library"
+
+[dependencies]
+libpeios-devel = "{{version}}"
+
+[files]
+":usr/lib/x86_64-linux-peios/*.a" = "usr/lib/x86_64-linux-peios/"

@@ -1,0 +1,23 @@
+# libpeios-devel — the kit for compiling and linking against libpeios: the public
+# headers (peios.h + peios/*.h) and the unversioned linker symlink
+# (libpeios.so -> libpeios.so.0). Inherits base metadata; pins the runtime it
+# matches.
+#
+# No C runtime startup objects (crt*.o) or *_nonshared.a here, unlike glibc-devel:
+# libpeios is a plain Rust cdylib with neither.
+
+[package]
+description = "Peios userspace C ABI library - development headers and libraries"
+
+[dependencies]
+# The dev .so symlink resolves into libpeios's versioned object, and the headers
+# must match the runtime's ABI. Pin to the same version; the operand omits the
+# peios revision, so any revision of that libpeios satisfies it (§2.2.8
+# revision-omission rule).
+libpeios = "{{version}}"
+
+[files]
+# Public headers (the shipping API: peios.h + peios/*.h).
+":usr/include/**"                  = "usr/include/"
+# Developer .so symlink for `-lpeios`.
+":usr/lib/x86_64-linux-peios/*.so" = "usr/lib/x86_64-linux-peios/"

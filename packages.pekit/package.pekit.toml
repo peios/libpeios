@@ -1,0 +1,17 @@
+# Base metadata shared by every libpeios package (libpeios, libpeios-devel,
+# libpeios-static, libpeios-debuginfo, libpeios-debugsource). Each
+# <name>.package.pekit.toml inherits these fields and overrides individual ones
+# as needed — primarily its own description and file set.
+#
+# libpeios is a single Rust crate fanned into five packages from one build.main
+# tree (the same way the glibc member fans a single source into many packages).
+# All are x86_64 — a compiled shared object, its DWARF, or its referenced
+# sources — and MIT-licensed (see LICENSE).
+
+format = "peipkg"
+
+[package]
+version      = "{{version}}-1"
+architecture = "x86_64"
+license      = "MIT"
+homepage     = "https://github.com/peios/libpeios"
