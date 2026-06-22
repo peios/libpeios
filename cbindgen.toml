@@ -38,6 +38,12 @@ parse_deps = false
 prefix = ""
 # The crate imports libc abort for the panic handler; it is not a libpeios export.
 exclude = ["abort"]
+# libpeios's C ABI is functions + descriptor structs only — it exports no
+# `#define` constants (the KACS/access-right constants live in the <pkm/*.h>
+# uapi headers). Dropping the `constants` kind keeps internal `pub const`
+# aliases in the vendored SDDL codec (e.g. GENERIC_READ) from leaking into the
+# snapshot and colliding with the uapi macros.
+item_types = ["globals", "enums", "structs", "unions", "typedefs", "opaque", "functions"]
 
 # The KACS uapi types we pass by value/pointer are tag-only `struct kacs_*` in the
 # <pkm/*.h> headers; cbindgen sees them as opaque externals and would emit them bare.

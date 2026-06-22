@@ -532,6 +532,20 @@ void peios_sd_builder_sacl(struct peios_sd_builder *b, const void *acl, size_t l
 
 int peios_sd_parse(const void *sd, size_t len, struct peios_sd_view *out);
 
+ptrdiff_t peios_sd_reinherit(void *out,
+                             size_t cap,
+                             const void *parent_sd,
+                             size_t parent_len,
+                             const void *child_sd,
+                             size_t child_len,
+                             int is_container);
+
+ptrdiff_t peios_sd_strip_inherited(void *out,
+                                   size_t cap,
+                                   const void *sd,
+                                   size_t sd_len,
+                                   uint32_t info);
+
 uint16_t peios_sd_view_control(const struct peios_sd_view *v);
 
 int peios_sd_view_dacl(const struct peios_sd_view *v, struct peios_acl_view *out);
@@ -541,6 +555,14 @@ int peios_sd_view_group(const struct peios_sd_view *v, const void **sid, size_t 
 int peios_sd_view_owner(const struct peios_sd_view *v, const void **sid, size_t *len);
 
 int peios_sd_view_sacl(const struct peios_sd_view *v, struct peios_acl_view *out);
+
+ptrdiff_t peios_sddl_format_condition(char *out, size_t cap, const void *artx, size_t len);
+
+ptrdiff_t peios_sddl_format_sd(char *out, size_t cap, const void *sd, size_t sd_len);
+
+ptrdiff_t peios_sddl_parse_condition(void *out, size_t cap, const char *expr);
+
+ptrdiff_t peios_sddl_parse_sd(void *out, size_t cap, const char *sddl);
 
 int peios_session_create(const struct peios_session_spec *spec, uint64_t *id_out);
 

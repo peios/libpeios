@@ -8,6 +8,8 @@
 pub mod acl_builder;
 pub mod mapping;
 pub mod sd_builder;
+mod sddl;
+mod sddl_ffi;
 pub mod sid;
 pub mod view;
 

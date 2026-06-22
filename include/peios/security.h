@@ -288,6 +288,84 @@ unsigned peios_sid_array_count(const peios_sid_array_view *a);
 int	 peios_sid_array_get(const peios_sid_array_view *a, unsigned i,
 			     const void **sid, size_t *len, uint32_t *attrs);
 
+/* ====================================================================== */
+/* SDDL text codec + SD inheritance                                       */
+/* ====================================================================== */
+
+/*
+ * The SDDL string form of a security descriptor (MS-DTYP §2.5.1) and the
+ * userspace-only inheritance helpers. These are a pure-userspace facility —
+ * the kernel speaks only the binary SD wire form. All entries return bytes
+ * getxattr-style: pass @cap == 0 (or a NULL buffer) to probe for the required
+ * length, then call again; a too-small non-zero buffer fails with ERANGE and
+ * writes nothing. Malformed input fails with EINVAL.
+ */
+
+/*
+ * peios_sddl_parse_sd - parse SDDL text into self-relative SD wire bytes.
+ * @out: destination buffer (or NULL to probe).
+ * @cap: @out capacity in bytes (0 to probe).
+ * @sddl: NUL-terminated SDDL string (e.g. "O:SYG:BAD:(A;;FA;;;BA)").
+ * Returns the SD byte length, or -1 (EINVAL malformed; ERANGE @cap too small).
+ */
+ssize_t peios_sddl_parse_sd(void *out, size_t cap, const char *sddl);
+
+/*
+ * peios_sddl_format_sd - render a self-relative SD as NUL-terminated SDDL text.
+ * @out: destination char buffer (or NULL to probe).
+ * @cap: @out capacity in bytes (0 to probe).
+ * @sd: SD wire bytes. @sd_len: their length.
+ * Returns the string length excluding the NUL (so allocate len + 1), or -1
+ * (EINVAL malformed SD; ERANGE @cap too small).
+ */
+ssize_t peios_sddl_format_sd(char *out, size_t cap, const void *sd, size_t sd_len);
+
+/*
+ * peios_sddl_parse_condition - parse an SDDL conditional expression into its
+ * "artx" callback-ACE bytecode.
+ * @out: destination buffer (or NULL to probe). @cap: capacity (0 to probe).
+ * @expr: NUL-terminated expression (e.g. "@User.Title == \"PM\"").
+ * Returns the bytecode length, or -1 (EINVAL malformed; ERANGE @cap too small).
+ */
+ssize_t peios_sddl_parse_condition(void *out, size_t cap, const char *expr);
+
+/*
+ * peios_sddl_format_condition - render "artx" callback-ACE bytecode back to
+ * NUL-terminated SDDL conditional-expression text (no outer parens).
+ * @out: destination char buffer (or NULL to probe). @cap: capacity (0 to probe).
+ * @artx: bytecode bytes. @len: their length.
+ * Returns the string length excluding the NUL, or -1 (EINVAL; ERANGE).
+ */
+ssize_t peios_sddl_format_condition(char *out, size_t cap, const void *artx, size_t len);
+
+/*
+ * peios_sd_reinherit - recompute a child SD's inherited ACEs from a parent SD.
+ * Strips ACEs carrying ACE_FLAG_INHERITED from the child DACL, re-derives them
+ * from the parent DACL (MS-DTYP §2.5.3.4), and appends them after the child's
+ * explicit ACEs; owner/group/SACL and the control bits pass through. Both
+ * inputs must be self-relative; the output is self-relative.
+ * @out: destination buffer (or NULL to probe). @cap: capacity (0 to probe).
+ * @parent_sd / @parent_len: the parent SD bytes. @child_sd / @child_len: the
+ * child SD bytes. @is_container: non-zero if the child is a container.
+ * Returns the new child SD byte length, or -1 (EINVAL; ERANGE).
+ */
+ssize_t peios_sd_reinherit(void *out, size_t cap, const void *parent_sd,
+			   size_t parent_len, const void *child_sd,
+			   size_t child_len, int is_container);
+
+/*
+ * peios_sd_strip_inherited - drop ACEs carrying ACE_FLAG_INHERITED from the
+ * ACLs selected by @info (a mask of *_SECURITY_INFORMATION bits; DACL and SACL
+ * are honored, other bits ignored; selecting neither copies the input
+ * verbatim). Owner/group and the control bits pass through; output is
+ * self-relative.
+ * @out: destination buffer (or NULL to probe). @cap: capacity (0 to probe).
+ * @sd / @sd_len: the SD bytes. @info: *_SECURITY_INFORMATION selector mask.
+ * Returns the resulting SD byte length, or -1 (EINVAL; ERANGE).
+ */
+ssize_t peios_sd_strip_inherited(void *out, size_t cap, const void *sd,
+				 size_t sd_len, uint32_t info);
+
 #ifdef __cplusplus
 }
 #endif
