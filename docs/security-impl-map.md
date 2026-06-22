@@ -80,7 +80,9 @@ error}.rs` on 2026-06-14.
   **inline** in libpeios; the kernel validates on the real syscall anyway.
 - **`peios_sid_format`:** `Sid`'s `Display` prints sub-authorities in decimal and
   the identifier-authority in decimal (≤2³²) or `0x%012x` (larger) — matches SDDL.
-  Make `peios_sid_parse_string` accept both forms and round-trip.
+- **`peios_sid_parse_string`:** accepts the numeric `S-1-…` literal (strict) and,
+  for non-`S-`-prefixed input, the two-letter SDDL aliases (`BA`/`SY`/`WD`/…) via
+  the SDDL alias table. A malformed `S-1-…` is not rescued by the alias parser.
 - **Ownership:** kacs-core owned outputs use `PkmVec`/`PkmString`; libpeios's own
   encoders can just use `alloc::Vec` directly — simpler, and we control the crate.
 

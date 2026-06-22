@@ -145,7 +145,12 @@ pub unsafe extern "C" fn peios_sid_build(
     emit_sid(id_authority, subs, out, cap)
 }
 
-/// `peios_sid_parse_string` — parse the SDDL string form into a binary SID.
+/// `peios_sid_parse_string` — parse a SID from its string form into binary.
+///
+/// Accepts both the numeric `S-1-…` literal and the two-letter SDDL aliases
+/// (`BA`, `SY`, `WD`, `BU`, the integrity labels, …) — the latter resolved
+/// through the SDDL SID-alias table. Domain-relative aliases that need a
+/// machine/domain SID prefix are rejected with `EINVAL`.
 #[no_mangle]
 pub unsafe extern "C" fn peios_sid_parse_string(
     out: *mut c_void,
@@ -157,8 +162,19 @@ pub unsafe extern "C" fn peios_sid_parse_string(
     } else {
         cstr_bytes(sddl, MAX_SDDL_LEN)
     };
-    match bytes.and_then(parse_sddl) {
-        Some((authority, subs, count)) => emit_sid(authority, &subs[..count], out, cap),
+    if let Some((authority, subs, count)) = bytes.and_then(parse_sddl) {
+        return emit_sid(authority, &subs[..count], out, cap);
+    }
+    // Fall back to the SDDL alias table (BA/SY/WD/…); `parse_sddl` above is the
+    // sole, strict path for the numeric `S-1-…` literal, so a string that looks
+    // like one but didn't parse is malformed — don't let the (more lenient)
+    // alias parser rescue it. Aliases are short letter codes, never `S-`.
+    let alias = bytes
+        .and_then(|b| core::str::from_utf8(b).ok())
+        .filter(|s| !s.trim_start().starts_with("S-") && !s.trim_start().starts_with("s-"))
+        .and_then(|s| crate::security::sddl::grammar::parse_sid(s).ok());
+    match alias {
+        Some(sid) => emit_bytes(&sid.encode(), out as *mut u8, cap),
         None => {
             set_errno(libc::EINVAL);
             -1
@@ -435,6 +451,18 @@ mod tests {
             let big = parse_string("S-1-0x100000000-1").unwrap();
             assert_eq!(big, build(0x1_0000_0000, &[1]));
             assert_eq!(format(&big), "S-1-0x000100000000-1");
+        }
+    }
+
+    #[test]
+    fn parse_string_accepts_sddl_aliases() {
+        unsafe {
+            // BA = BUILTIN\Administrators = S-1-5-32-544
+            assert_eq!(parse_string("BA").unwrap(), build(5, &[32, 544]));
+            // SY = LocalSystem = S-1-5-18
+            assert_eq!(parse_string("SY").unwrap(), build(5, &[18]));
+            // WD = Everyone = S-1-1-0
+            assert_eq!(parse_string("WD").unwrap(), build(1, &[0]));
         }
     }
 
