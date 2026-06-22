@@ -14,7 +14,8 @@
 //! (precedence 0; for the length-counted ioctls, base is `layer == NULL` with
 //! `layer_len == 0`). The buffer-returning reads ([`peios_reg_enum_subkey`],
 //! [`peios_reg_query_key_info`]) use the registry-wide fill-or-`ERANGE` contract
-//! (see [`super::value`]): a zero-capacity name buffer probes the required length.
+//! (see [`super::value`]): a zero-capacity name buffer probes the required length,
+//! while NULL with nonzero capacity is `EINVAL`.
 
 #![allow(non_camel_case_types)]
 
@@ -40,6 +41,10 @@ const _: () = assert!(core::mem::size_of::<reg_query_key_info_args>() == 64);
 const _: () = assert!(core::mem::size_of::<reg_delete_key_args>() == 24);
 const _: () = assert!(core::mem::size_of::<reg_hide_key_args>() == 24);
 const _: () = assert!(core::mem::size_of::<reg_notify_args>() == 8);
+
+fn out_buf_valid(ptr: *const c_void, cap: u32) -> bool {
+    cap == 0 || !ptr.is_null()
+}
 
 /// `peios_reg_open_key` — open an existing registry key.
 ///
@@ -84,15 +89,16 @@ fn build_create_key_args(
     txn_fd: c_int,
     disposition_out: *mut u32,
 ) -> reg_create_key_args {
-    let mut args = reg_create_key_args::default();
-    args.parent_fd = parent_fd;
-    args.path_ptr = path as usize as u64;
-    args.desired_access = desired_access;
-    args.flags = flags;
-    args.layer_ptr = layer as usize as u64;
-    args.txn_fd = txn_fd;
-    args.disposition_ptr = disposition_out as usize as u64;
-    args
+    reg_create_key_args {
+        parent_fd,
+        path_ptr: path as usize as u64,
+        desired_access,
+        flags,
+        layer_ptr: layer as usize as u64,
+        txn_fd,
+        disposition_ptr: disposition_out as usize as u64,
+        ..Default::default()
+    }
 }
 
 /// `peios_reg_create_key` — open or create a registry key.
@@ -174,7 +180,8 @@ pub struct peios_reg_subkey {
 /// Returns 0, or `-1` with `errno` (`ENOENT` past the end, `ERANGE`, `EACCES`, …).
 ///
 /// # Safety
-/// `v` valid for writing, with `v->name` valid for `v->name_cap` bytes when non-NULL.
+/// `v` valid for writing, with `v->name` valid for `v->name_cap` bytes when
+/// `v->name_cap != 0`.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_enum_subkey(
     key_fd: c_int,
@@ -186,11 +193,17 @@ pub unsafe extern "C" fn peios_reg_enum_subkey(
         set_errno(libc::EINVAL);
         return -1;
     };
-    let mut a = reg_enum_subkey_args::default();
-    a.index = index;
-    a.name_len = v.name_cap; // in: capacity (overwritten with the actual length)
-    a.name_ptr = v.name as usize as u64;
-    a.txn_fd = txn_fd;
+    if !out_buf_valid(v.name, v.name_cap) {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut a = reg_enum_subkey_args {
+        index,
+        name_len: v.name_cap, // in: capacity (overwritten with the actual length)
+        name_ptr: v.name as usize as u64,
+        txn_fd,
+        ..Default::default()
+    };
     let r = ioctl_struct(key_fd, REG_IOC_ENUM_SUBKEYS, &mut a);
     if r == 0 {
         v.name_len = a.name_len;
@@ -251,7 +264,8 @@ pub struct peios_reg_key_info {
 /// and call again to obtain the metadata. Returns 0, or `-1` with `errno`.
 ///
 /// # Safety
-/// `v` valid for writing, with `v->name` valid for `v->name_cap` bytes when non-NULL.
+/// `v` valid for writing, with `v->name` valid for `v->name_cap` bytes when
+/// `v->name_cap != 0`.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_query_key_info(
     key_fd: c_int,
@@ -261,9 +275,15 @@ pub unsafe extern "C" fn peios_reg_query_key_info(
         set_errno(libc::EINVAL);
         return -1;
     };
-    let mut a = reg_query_key_info_args::default();
-    a.name_len = v.name_cap; // in: capacity (overwritten with the actual length)
-    a.name_ptr = v.name as usize as u64;
+    if !out_buf_valid(v.name, v.name_cap) {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut a = reg_query_key_info_args {
+        name_len: v.name_cap, // in: capacity (overwritten with the actual length)
+        name_ptr: v.name as usize as u64,
+        ..Default::default()
+    };
     let r = ioctl_struct(key_fd, REG_IOC_QUERY_KEY_INFO, &mut a);
     if r == 0 {
         v.name_len = a.name_len;
@@ -307,10 +327,12 @@ pub unsafe extern "C" fn peios_reg_delete_key(
     layer_len: u32,
     txn_fd: c_int,
 ) -> c_int {
-    let mut a = reg_delete_key_args::default();
-    a.layer_len = layer_len;
-    a.layer_ptr = layer as usize as u64;
-    a.txn_fd = txn_fd;
+    let mut a = reg_delete_key_args {
+        layer_len,
+        layer_ptr: layer as usize as u64,
+        txn_fd,
+        ..Default::default()
+    };
     ioctl_struct(key_fd, REG_IOC_DELETE_KEY, &mut a)
 }
 
@@ -330,10 +352,12 @@ pub unsafe extern "C" fn peios_reg_hide_key(
     layer_len: u32,
     txn_fd: c_int,
 ) -> c_int {
-    let mut a = reg_hide_key_args::default();
-    a.layer_len = layer_len;
-    a.layer_ptr = layer as usize as u64;
-    a.txn_fd = txn_fd;
+    let mut a = reg_hide_key_args {
+        layer_len,
+        layer_ptr: layer as usize as u64,
+        txn_fd,
+        ..Default::default()
+    };
     ioctl_struct(key_fd, REG_IOC_HIDE_KEY, &mut a)
 }
 
@@ -354,9 +378,15 @@ pub unsafe extern "C" fn peios_reg_hide_key(
 /// `key_fd` must be a registry key fd.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_notify(key_fd: c_int, filter: u32, subtree: c_int) -> c_int {
-    let mut a = reg_notify_args::default();
-    a.filter = filter;
-    a.subtree = subtree as u8;
+    if subtree != 0 && subtree != 1 {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut a = reg_notify_args {
+        filter,
+        subtree: subtree as u8,
+        ..Default::default()
+    };
     ioctl_struct(key_fd, REG_IOC_NOTIFY, &mut a)
 }
 
@@ -369,12 +399,17 @@ pub unsafe extern "C" fn peios_reg_notify(key_fd: c_int, filter: u32, subtree: c
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_flush(key_fd: c_int) -> c_int {
     // REG_IOC_FLUSH is an argument-less `_IO` code.
-    ioctl(key_fd, REG_IOC_FLUSH as core::ffi::c_ulong, core::ptr::null_mut())
+    ioctl(
+        key_fd,
+        REG_IOC_FLUSH as core::ffi::c_ulong,
+        core::ptr::null_mut(),
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::get_errno;
     use peios_uapi::REG_OPTION_VOLATILE;
 
     #[test]
@@ -428,5 +463,51 @@ mod tests {
         assert_eq!(args.layer_ptr, 0);
         assert_eq!(args.disposition_ptr, 0);
         assert_eq!(args.txn_fd, -1);
+    }
+
+    #[test]
+    fn notify_rejects_non_boolean_subtree() {
+        let r = unsafe { peios_reg_notify(-1, 0, 256) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
+    }
+
+    #[test]
+    fn enum_subkey_rejects_null_name_with_capacity() {
+        let mut v = peios_reg_subkey {
+            name: core::ptr::null_mut(),
+            last_write_time: 0,
+            name_cap: 1,
+            name_len: 0,
+            subkey_count: 0,
+            value_count: 0,
+        };
+
+        let r = unsafe { peios_reg_enum_subkey(-1, 0, -1, &mut v) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
+    }
+
+    #[test]
+    fn query_key_info_rejects_null_name_with_capacity() {
+        let mut v = peios_reg_key_info {
+            name: core::ptr::null_mut(),
+            last_write_time: 0,
+            hive_generation: 0,
+            name_cap: 1,
+            name_len: 0,
+            subkey_count: 0,
+            value_count: 0,
+            max_subkey_name_len: 0,
+            max_value_name_len: 0,
+            max_value_data_size: 0,
+            sd_size: 0,
+            volatile_key: 0,
+            symlink: 0,
+        };
+
+        let r = unsafe { peios_reg_query_key_info(-1, &mut v) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
     }
 }

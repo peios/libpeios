@@ -7,8 +7,9 @@ boundary (KACS access control, LCS registry, KMES events — exposed by PKM).
 ## Locked decisions
 
 - **Identity:** `libpeios.so.0`, `peios_` symbols, `<peios/…>` headers. Concept-
-  split modules: `security` · `token` · `access` · `file` · `process` (= KACS);
-  `registry` (LCS) and `event` (KMES) come later. RSI provider → separate `librsi`.
+  split modules: `security` · `token` · `access` · `file` · `process` (= KACS),
+  `registry` (LCS client), and `event`/`msgpack` (KMES). RSI provider → separate
+  `librsi`.
 - **Language:** Rust, `#![no_std]` + `alloc`, `panic = "abort"`, thin `extern "C"`
   shim. The C ABI is the frozen boundary; the impl language is invisible to callers.
 - **Dependencies:** `peios-cabi` (the shared C-ABI substrate — see below),
@@ -25,8 +26,8 @@ boundary (KACS access control, LCS registry, KMES events — exposed by PKM).
   `peios_cabi::{abi, sys}` as `crate::{abi, sys}` (zero churn in the domain modules)
   and keeps a local `error` module that re-exports the errno slot and adds the
   `KacsError`→errno mapping (`errno_for`/`fail`). The extraction was verified
-  ABI-neutral: the cbindgen snapshot regenerates byte-identical, 185 symbols
-  unchanged. **`librsi` is a separate repo** (registry source / RSI provider), TBD.
+  ABI-neutral by the cbindgen snapshot and public-header verifier. **`librsi` is a
+  separate repo** (registry source / RSI provider), TBD.
 - **Error model:** `int` = fd / 0 on success, `-1`+errno on failure. `ssize_t` =
   byte length, getxattr-style (probe with `cap==0`; too-small non-zero → `ERANGE`,
   never a partial write). Structured results via out-params. `access_check` → 0 /
@@ -47,16 +48,41 @@ boundary (KACS access control, LCS registry, KMES events — exposed by PKM).
   RESOLVED:** hand-written headers are the API; cbindgen *verifies* them against the
   Rust ABI (`cbindgen.toml` + the `abi/peios-abi.h` snapshot + `tools/verify-abi.sh`).
   See the "Header sync — DONE" entry under `## Next` and `abi/README.md`.
-- **msgpack (KMES, later):** own a complete in-house codec + a raw-bytes escape hatch.
+- **msgpack (KMES):** libpeios owns the in-house codec + raw-bytes escape hatch
+  used by KMES event payloads.
 
-## Built so far (verified)
+## Current status (verified)
+
+- `libpeios/` is a complete C-ABI crate for KACS, KMES, and the LCS registry
+  client surface. It builds `libpeios.so.0` plus `libpeios.a`, exports only
+  `peios_*` symbols, and ships the hand-written public headers under
+  `include/peios/`.
+- The implemented modules are `security`, `token`, `access`, `file`, `process`,
+  `msgpack`, `event`, and `registry`. The registry source/provider side remains
+  deliberately out of scope for libpeios and belongs to `librsi`.
+- C headers are the shipping API. `cbindgen` is used only as a verifier through
+  `abi/peios-abi.h` and `tools/verify-abi.sh`, which checks snapshot freshness,
+  standalone C/C++ compilation, function signatures, struct layouts, and data
+  symbols.
+- Local `cargo test` covers pure/userspace logic, argument marshalling, parsers,
+  builders, the MessagePack codec, and in-memory event ring/reader behavior. Live
+  syscall, ioctl, mmap, futex, and kernel-policy behavior remains Provium
+  integration coverage.
+- Packaging is wired through `pekit.toml`: build stages the runtime shared object,
+  development symlink/headers, static archive, split debug info, and debugsource.
+
+## Historical checkpoints
+
+The notes below are implementation milestones retained for context. They are not
+authoritative live counts; use the current-status section, `cargo test`, and
+`tools/verify-abi.sh` for current verification state.
 
 - `libpeios/` crate: `Cargo.toml` (cdylib+staticlib, no_std, panic=abort, own
-  workspace), `build.rs` (soname `libpeios.so.0`), `src/lib.rs` (hello-world:
-  `peios_abi_version` probe), `pekit.toml`. `cargo build --release` + `cargo test`
-  both green; the `.so` carries the soname and exports only `peios_*`.
-- `include/peios/{security,token,access,file,process}.h` + `peios.h` — the full
-  KACS C ABI surface, MIT, each compiles standalone clean.
+  workspace), `build.rs` (soname `libpeios.so.0`), `src/lib.rs` (all-surface module
+  wiring), `pekit.toml`. `cargo build --release` + `cargo test` both green; the
+  `.so` carries the soname and exports the documented `peios_*` public surface.
+- `include/peios/{security,token,access,file,process,msgpack,event,registry}.h` +
+  `peios.h` — the full C ABI surface, MIT, each compiles standalone clean.
 - `docs/kacs-abi-reference.md` — the KACS ABI digest (from PSD-004 v0.20).
 - `kacs-core` made no_std-consumable (`pkm_alloc` `std`→`alloc`,
   `#![cfg_attr(not(test), no_std)]`, `extern crate alloc` gated off-kernel); the
@@ -78,8 +104,8 @@ boundary (KACS access control, LCS registry, KMES events — exposed by PKM).
   length / equal / rid), encoders are libpeios-original byte assembly, inspectors
   shim onto `kacs_core::Sid`. 8 unit tests green (layout, well-known table,
   hex/decimal authority round-trip, malformed→EINVAL, probe/ERANGE, ABI static
-  assert `SID_MAX_BYTES==68`). `.so` exports exactly the 10 symbols + abi_version,
-  no leaks; soname `libpeios.so.0`.
+  assert `SID_MAX_BYTES==68`). The initial SID slice exported only the expected
+  `peios_sid_*` surface; no leaks; soname `libpeios.so.0`.
 
 - **`security/view.rs` — DONE & verified.** The SD/ACL/ACE zero-copy views
   (`peios_sd_parse` + `_view_control/owner/group/dacl/sacl`, `peios_acl_parse` +
@@ -315,11 +341,12 @@ boundary (KACS access control, LCS registry, KMES events — exposed by PKM).
   to tail), the torn-read re-check of tail after reading, the corruption guards,
   and `read_pos & (capacity-1)` addressing of the free-running counter. Events are
   **unaligned** (read_pos advances by arbitrary event_size), so the header is read
-  byte-wise via a pure `parse_event` (the one `cargo test`-able piece; the live
-  drain is Provium). 4 unit tests (valid parse + field extraction, zero-payload
-  kernel event, the corruption-rejection set, struct sizes). Added a `futex_wait`
-  helper (libc `SYS_futex`). 167 `peios_*` (+15), no leaks, no warnings, 71 tests
-  green; `<peios/event.h>` (now full emit + consume) compiles standalone (C & C++).
+  byte-wise via a pure `parse_event`; parsing plus the in-memory ring/reader paths
+  are `cargo test`-covered, while live syscall/mmap/futex integration remains
+  Provium-only. Unit tests cover valid parses, corruption rejection,
+  wrap-boundary reads, sequence-gap accounting, lapping recovery, corrupt-slot
+  handling, and struct sizes. The futex wait helper uses libc `SYS_futex`;
+  `<peios/event.h>` (now full emit + consume) compiles standalone (C & C++).
   **The `event` (KMES) subsystem is complete.**
 
 ## Finding — NULL DACL is not a valid KACS encoding (header reworded ✓)
@@ -358,24 +385,25 @@ left is cross-cutting, not new surface:
   *verifies* them. `cbindgen.toml` + a committed doc-stripped snapshot
   `abi/peios-abi.h` (the Rust-truth ABI) + `tools/verify-abi.sh`. The verifier:
   (1) regenerates the snapshot and diffs it against the committed one (Rust-drift
-  gate); (2) compiles the snapshot standalone C/C++; (3) compares every public
+  gate); (2) compiles the snapshot and public umbrella standalone C/C++; (3) compares every public
   function signature between `<peios.h>` and the snapshot via `gcc -aux-info`;
-  (4) compares every struct's `sizeof`+`_Alignof`; (5) compares the data symbols.
-  Steps 3–5 ignore only ABI-irrelevant spellings (param/field names — so `type_`↔
-  `type` is fine — `struct`/`enum` tags, `ptrdiff_t`≡`ssize_t`, `uintptr_t`≡`size_t`,
-  enum≡int). **Result: 185 fns + 24 structs + 2 data symbols all match exactly.**
-  Reconciliation also found and removed the stale `peios_abi_version` scaffold probe
-  (it was exported but in no header; nothing depended on it). cbindgen 0.29.2 is not
-  on PATH — run the script under `nix-shell -p rust-cbindgen --run ./tools/verify-abi.sh`
-  (nixpkgs attr is `rust-cbindgen`, not `cbindgen`; the script calls `cbindgen`
-  directly and errors if absent). No clang here, so the comparison uses
+  (4) compares every struct's `sizeof`+`_Alignof`+field offsets; (5) compares the data symbols.
+  Steps 3 and 5 ignore only ABI-irrelevant spellings (param names,
+  `struct`/`enum` tags, `ptrdiff_t`≡`ssize_t`, `uintptr_t`≡`size_t`,
+  enum≡int); struct field offsets are compared, with only `type_`↔`type`
+  normalized. **Result: the generated Rust ABI snapshot and hand-written public
+  headers match for functions, structs, and data symbols.** cbindgen 0.29.2 must be
+  on PATH before running `./tools/verify-abi.sh`; if it is not installed locally,
+  `nix-shell -p rust-cbindgen --run ./tools/verify-abi.sh` remains a usable fallback.
+  No clang here, so the comparison uses
   `gcc -aux-info` + size probes, not an AST differ. Negative-tested (perturbing a
   signature fails the gate).
   Umbrella `<peios.h>` updated to include all 8 headers. See `abi/README.md`.
 - **Provium integration pass** — stand up the live tests for every syscall/ioctl/
-  mmap path across all three subsystems (`rustup target add
-  x86_64-unknown-linux-musl`, in-tree bzImage). So far only pure logic is
-  `cargo test`-covered.
+  mmap/futex path across all three subsystems (`rustup target add
+  x86_64-unknown-linux-musl`, in-tree bzImage). `cargo test` covers the pure
+  userspace logic and in-memory event ring/reader paths; live kernel behavior is
+  Provium coverage.
 - **`librsi`** (separate library) — the registry **source**/provider side:
   `REG_SRC_REGISTER` + the RSI framed protocol (`write_rsi_*` / `parse_rsi_*` in
   `lcs-core`). Explicitly out of libpeios.
@@ -413,23 +441,20 @@ left is cross-cutting, not new surface:
   (e.g. `data_len` = in-cap & out-actual). `set_value` CAS via `expected_seq`
   (0 disables, mismatch → `EAGAIN`); `REG_TOMBSTONE` accepted as a set type.
   `set_security` passes the caller's KACS SD straight through (kernel parses), with
-  a file.rs-style empty-SD `EINVAL` guard. 85 tests, **186 `T peios_` symbols
-  (21 `peios_reg_*`)**, zero warnings, header compiles standalone C/C++. Registry
-  allocates nothing (stack structs + ioctls) → no new leak surface.
+  a file.rs-style empty-SD `EINVAL` guard. The registry marshalling tests are
+  green, zero warnings, header compiles standalone C/C++. Registry allocates
+  nothing (stack structs + ioctls) → no new leak surface.
 
 ## Deferred / open
 
-- Header sync model — **RESOLVED: cbindgen *verifies*, headers are hand-written.**
-  See the "Header sync — DONE" entry under `## Next` and `abi/README.md`.
 - Token-spec / session-spec **encoders** are libpeios-original (the kernel only
-  *decodes* them) — pin to the uapi `*_OFF_*` offsets + a Provium round-trip test.
+  *decodes* them) and are pinned to the uapi `*_OFF_*` offsets; keep Provium
+  round-trip coverage alongside the unit encoder tests.
 - SD/ACL **builders** — **RESOLVED:** kacs-core is parse/evaluate-only (no
   SID/ACL/ACE/SD construction API). The build/encode half of `security.h` is
   libpeios-original (on `alloc::Vec` + uapi layouts + kacs-core's
   `minimum_acl_revision_*`); the parse half shims onto `Sid`/`Acl`/
   `SecurityDescriptor`. Full mapping in `security-impl-map.md`.
-- pekit `[install]` syntax (`.so`→`.so.0` symlink, headers, `peios.pc`) — user to
-  provide at packaging time.
 - `rustup target add x86_64-unknown-linux-musl` for the Provium static build.
 - Kernel internal-dedup follow-up (kacs-core constants vs the promoted uapi) — needs
   a kernel build.

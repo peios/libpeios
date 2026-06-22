@@ -194,6 +194,9 @@ pub unsafe extern "C" fn peios_sd_builder_owner(
     len: usize,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match as_slice(sid, len) {
         Some(s) => b.set_component(s, sid_valid, |b, v| b.owner = Some(v)),
         None => b.latch(libc::EINVAL),
@@ -208,6 +211,9 @@ pub unsafe extern "C" fn peios_sd_builder_group(
     len: usize,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match as_slice(sid, len) {
         Some(s) => b.set_component(s, sid_valid, |b, v| b.group = Some(v)),
         None => b.latch(libc::EINVAL),
@@ -232,6 +238,9 @@ pub unsafe extern "C" fn peios_sd_builder_dacl(
     len: usize,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match as_slice(acl, len) {
         Some(a) => b.set_component(a, acl_valid, |b, v| b.dacl = Some(v)),
         None => b.latch(libc::EINVAL),
@@ -260,6 +269,9 @@ pub unsafe extern "C" fn peios_sd_builder_sacl(
     len: usize,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match as_slice(acl, len) {
         Some(a) => b.set_component(a, acl_valid, |b, v| b.sacl = Some(v)),
         None => b.latch(libc::EINVAL),
@@ -369,7 +381,10 @@ mod tests {
         let need = peios_sd_builder_finish(b, ptr::null_mut(), 0);
         assert!(need > 0, "finish probe failed, errno={}", errno());
         let mut v = vec![0u8; need as usize];
-        assert_eq!(peios_sd_builder_finish(b, v.as_mut_ptr() as *mut c_void, v.len()), need);
+        assert_eq!(
+            peios_sd_builder_finish(b, v.as_mut_ptr() as *mut c_void, v.len()),
+            need
+        );
         v
     }
 
@@ -395,7 +410,10 @@ mod tests {
 
             let sd = finish(b);
             let mut v = peios_sd_view { _opaque: [0; 8] };
-            assert_eq!(peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v), 0);
+            assert_eq!(
+                peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v),
+                0
+            );
 
             let control = peios_sd_view_control(&v);
             assert_eq!(control & SELF_RELATIVE, SELF_RELATIVE);
@@ -421,7 +439,10 @@ mod tests {
             peios_sd_builder_dacl_null(b);
             let sd = finish(b);
             let mut v = peios_sd_view { _opaque: [0; 8] };
-            assert_eq!(peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v), 0);
+            assert_eq!(
+                peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v),
+                0
+            );
             // KACS rejects the NULL-DACL form, so grant-all is an absent DACL.
             assert_eq!(peios_sd_view_control(&v) & DACL_PRESENT, 0);
             let mut av = peios_acl_view { _opaque: [0; 4] };
@@ -439,7 +460,10 @@ mod tests {
             peios_sd_builder_dacl_null(b); // last call wins -> grant all
             let sd = finish(b);
             let mut v = peios_sd_view { _opaque: [0; 8] };
-            assert_eq!(peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v), 0);
+            assert_eq!(
+                peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v),
+                0
+            );
             assert_eq!(peios_sd_view_control(&v) & DACL_PRESENT, 0);
             peios_sd_builder_free(b);
         }
@@ -452,7 +476,10 @@ mod tests {
             let sd = finish(b);
             assert_eq!(sd.len(), SD_HEADER);
             let mut v = peios_sd_view { _opaque: [0; 8] };
-            assert_eq!(peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v), 0);
+            assert_eq!(
+                peios_sd_parse(sd.as_ptr() as *const c_void, sd.len(), &mut v),
+                0
+            );
             assert_eq!(peios_sd_view_control(&v) & DACL_PRESENT, 0);
             peios_sd_builder_free(b);
         }

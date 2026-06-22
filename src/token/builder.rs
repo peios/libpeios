@@ -57,7 +57,8 @@ const OFF_GROUPS_OFFSET: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_GROUPS_OFFSET a
 const OFF_GROUPS_COUNT: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_GROUPS_COUNT as usize;
 const OFF_DEFAULT_DACL_OFFSET: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_DEFAULT_DACL_OFFSET as usize;
 const OFF_DEFAULT_DACL_LEN: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_DEFAULT_DACL_LEN as usize;
-const OFF_DEVICE_GROUPS_OFFSET: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_DEVICE_GROUPS_OFFSET as usize;
+const OFF_DEVICE_GROUPS_OFFSET: usize =
+    peios_uapi::KACS_TOKEN_SPEC_OFF_DEVICE_GROUPS_OFFSET as usize;
 const OFF_DEVICE_GROUPS_COUNT: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_DEVICE_GROUPS_COUNT as usize;
 const OFF_RESTRICTED_SIDS_OFFSET: usize =
     peios_uapi::KACS_TOKEN_SPEC_OFF_RESTRICTED_SIDS_OFFSET as usize;
@@ -70,7 +71,8 @@ const OFF_SUPP_GIDS_OFFSET: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_SUPP_GIDS_OF
 const OFF_SUPP_GIDS_COUNT: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_SUPP_GIDS_COUNT as usize;
 const OFF_USER_CLAIMS_OFFSET: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_USER_CLAIMS_OFFSET as usize;
 const OFF_USER_CLAIMS_LEN: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_USER_CLAIMS_LEN as usize;
-const OFF_DEVICE_CLAIMS_OFFSET: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_DEVICE_CLAIMS_OFFSET as usize;
+const OFF_DEVICE_CLAIMS_OFFSET: usize =
+    peios_uapi::KACS_TOKEN_SPEC_OFF_DEVICE_CLAIMS_OFFSET as usize;
 const OFF_DEVICE_CLAIMS_LEN: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_DEVICE_CLAIMS_LEN as usize;
 const OFF_LCS_CREDENTIALS_OFFSET: usize =
     peios_uapi::KACS_TOKEN_SPEC_OFF_LCS_CREDENTIALS_OFFSET as usize;
@@ -125,7 +127,10 @@ struct SidAttrs {
 
 impl SidAttrs {
     fn push(&mut self, sid: &[u8], attrs: u32) -> Result<(), ()> {
-        try_extend(&mut self.data, &u32_len(sid.len()).map_err(|_| ())?.to_le_bytes())?;
+        try_extend(
+            &mut self.data,
+            &u32_len(sid.len()).map_err(|_| ())?.to_le_bytes(),
+        )?;
         try_extend(&mut self.data, sid)?;
         try_extend(&mut self.data, &attrs.to_le_bytes())?;
         self.count = self.count.checked_add(1).ok_or(())?;
@@ -259,13 +264,22 @@ impl peios_token_builder {
             };
         }
 
-        let user_off = place!(self.user_sid.is_some(), self.user_sid.as_deref().unwrap_or(&[]));
+        let user_off = place!(
+            self.user_sid.is_some(),
+            self.user_sid.as_deref().unwrap_or(&[])
+        );
         let groups_off = place!(self.groups.count > 0, &self.groups.data);
-        let dacl_off = place!(self.default_dacl.is_some(), self.default_dacl.as_deref().unwrap_or(&[]));
+        let dacl_off = place!(
+            self.default_dacl.is_some(),
+            self.default_dacl.as_deref().unwrap_or(&[])
+        );
         let dacl_len = self.default_dacl.as_ref().map_or(0, Vec::len) as u32;
         let dgroups_off = place!(self.device_groups.count > 0, &self.device_groups.data);
         let rsids_off = place!(self.restricted_sids.count > 0, &self.restricted_sids.data);
-        let conf_off = place!(self.confinement_sid.is_some(), self.confinement_sid.as_deref().unwrap_or(&[]));
+        let conf_off = place!(
+            self.confinement_sid.is_some(),
+            self.confinement_sid.as_deref().unwrap_or(&[])
+        );
         let conf_len = self.confinement_sid.as_ref().map_or(0, Vec::len) as u32;
         let supp_off = place!(self.supp_gids_count > 0, &self.supp_gids);
         let uclaims_off = place!(!self.user_claims.is_empty(), &self.user_claims);
@@ -373,6 +387,9 @@ pub unsafe extern "C" fn peios_token_builder_add_group(
     attrs: u32,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match sid_slice(sid, len) {
         Some(s) => b.add_sid_attrs(Section::Groups, s, attrs),
         None => b.latch(libc::EINVAL),
@@ -561,6 +578,9 @@ pub unsafe extern "C" fn peios_token_builder_add_restricted_sid(
     attrs: u32,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match sid_slice(sid, len) {
         Some(s) => b.add_sid_attrs(Section::RestrictedSids, s, attrs),
         None => b.latch(libc::EINVAL),
@@ -576,6 +596,9 @@ pub unsafe extern "C" fn peios_token_builder_add_device_group(
     attrs: u32,
 ) {
     let Some(b) = b.as_mut() else { return };
+    if b.error != 0 {
+        return;
+    }
     match sid_slice(sid, len) {
         Some(s) => b.add_sid_attrs(Section::DeviceGroups, s, attrs),
         None => b.latch(libc::EINVAL),
@@ -618,23 +641,25 @@ pub unsafe extern "C" fn peios_token_builder_supp_gids(
         b.latch(libc::EINVAL);
         return;
     }
-    let gids = slice::from_raw_parts(gids, count as usize);
-    let Some(bytes) = gids.len().checked_mul(4) else {
+    let gids = if count == 0 {
+        &[][..]
+    } else {
+        slice::from_raw_parts(gids, count as usize)
+    };
+    let Some(bytes) = gids.len().checked_mul(core::mem::size_of::<u32>()) else {
         b.latch(libc::EINVAL);
         return;
     };
-    if b.supp_gids.try_reserve(bytes).is_err() {
+    let mut encoded = Vec::new();
+    if encoded.try_reserve(bytes).is_err() {
         b.latch(libc::ENOMEM);
         return;
     }
     for &gid in gids {
-        b.supp_gids.extend_from_slice(&gid.to_le_bytes());
+        encoded.extend_from_slice(&gid.to_le_bytes());
     }
-    let Some(total) = b.supp_gids_count.checked_add(count) else {
-        b.latch(libc::EINVAL);
-        return;
-    };
-    b.supp_gids_count = total;
+    b.supp_gids = encoded;
+    b.supp_gids_count = count;
 }
 
 /// `peios_token_builder_flags` — set the four token-spec boolean flags.
@@ -750,6 +775,9 @@ unsafe fn encode_claim(claim: &peios_token_claim) -> Result<Vec<u8>, c_int> {
     for (i, v) in values.iter().enumerate() {
         value_offsets.push(u32_len(slots0 + i * slot_size)?);
         if is_scalar {
+            if vt == KACS_CLAIM_TYPE_BOOLEAN && v.scalar > 1 {
+                return Err(libc::EINVAL);
+            }
             try_extend(&mut slots, &v.scalar.to_le_bytes()).map_err(oom)?;
             continue;
         }
@@ -827,7 +855,8 @@ unsafe fn add_claim(b: &mut peios_token_builder, device: bool, claim: *const pei
     } else {
         &mut b.user_claims
     };
-    if try_extend(section, &entry_len.to_le_bytes()).is_err() || try_extend(section, &payload).is_err()
+    if try_extend(section, &entry_len.to_le_bytes()).is_err()
+        || try_extend(section, &payload).is_err()
     {
         b.latch(libc::ENOMEM);
     }
@@ -1165,6 +1194,39 @@ mod tests {
     }
 
     #[test]
+    fn supp_gids_accepts_null_empty_array() {
+        unsafe {
+            let b = peios_token_builder_new();
+            peios_token_builder_supp_gids(b, ptr::null(), 0);
+            assert_eq!(peios_token_builder_error(b), 0);
+            let spec = bytes(b);
+            assert_eq!(u32_at(&spec, OFF_SUPP_GIDS_OFFSET), 0);
+            assert_eq!(u32_at(&spec, OFF_SUPP_GIDS_COUNT), 0);
+            peios_token_builder_free(b);
+        }
+    }
+
+    #[test]
+    fn supp_gids_replaces_prior_values() {
+        unsafe {
+            let b = peios_token_builder_new();
+            let first = [10u32, 11];
+            let second = [20u32];
+
+            peios_token_builder_supp_gids(b, first.as_ptr(), first.len() as c_uint);
+            peios_token_builder_supp_gids(b, second.as_ptr(), second.len() as c_uint);
+            assert_eq!(peios_token_builder_error(b), 0);
+
+            let spec = bytes(b);
+            assert_eq!(u32_at(&spec, OFF_SUPP_GIDS_COUNT), 1);
+            let off = u32_at(&spec, OFF_SUPP_GIDS_OFFSET) as usize;
+            assert_eq!(u32_at(&spec, off), 20);
+
+            peios_token_builder_free(b);
+        }
+    }
+
+    #[test]
     fn invalid_sid_latches() {
         unsafe {
             let b = peios_token_builder_new();
@@ -1177,6 +1239,31 @@ mod tests {
             // reset recovers.
             peios_token_builder_reset(b);
             assert_eq!(peios_token_builder_error(b), 0);
+            peios_token_builder_free(b);
+        }
+    }
+
+    #[test]
+    fn boolean_claim_rejects_non_boolean_scalar() {
+        unsafe {
+            let b = peios_token_builder_new();
+            let val = peios_token_claim_value {
+                scalar: 2,
+                bytes: ptr::null(),
+                len: 0,
+            };
+            let name = b"Mfa\0";
+            let claim = peios_token_claim {
+                name: name.as_ptr() as *const c_char,
+                value_type: peios_uapi::KACS_CLAIM_TYPE_BOOLEAN as u16,
+                flags: 0,
+                values: &val,
+                value_count: 1,
+            };
+
+            peios_token_builder_add_user_claim(b, &claim);
+            assert_eq!(peios_token_builder_error(b), libc::EINVAL);
+
             peios_token_builder_free(b);
         }
     }
@@ -1249,7 +1336,10 @@ mod tests {
             let elen = u32_at(usec, 0) as usize;
             let s = &usec[4..4 + elen];
             let name_off = u32_at(s, 0) as usize;
-            assert_eq!(u16::from_le_bytes([s[4], s[5]]) as u32, peios_uapi::KACS_CLAIM_TYPE_STRING);
+            assert_eq!(
+                u16::from_le_bytes([s[4], s[5]]) as u32,
+                peios_uapi::KACS_CLAIM_TYPE_STRING
+            );
             assert_eq!(u32_at(s, 12), 1); // value_count
             let slot = u32_at(s, 16) as usize; // value_offsets[0] → the slot
             let str_off = u32_at(s, slot) as usize; // pointer slot → string bytes

@@ -75,8 +75,10 @@ const FILE_WRITE: u32 = KACS_FILE_WRITE_DATA
     | KACS_FILE_WRITE_EA
     | KACS_ACCESS_READ_CONTROL
     | KACS_ACCESS_SYNCHRONIZE;
-const FILE_EXECUTE: u32 =
-    KACS_FILE_EXECUTE | KACS_FILE_READ_ATTRIBUTES | KACS_ACCESS_READ_CONTROL | KACS_ACCESS_SYNCHRONIZE;
+const FILE_EXECUTE: u32 = KACS_FILE_EXECUTE
+    | KACS_FILE_READ_ATTRIBUTES
+    | KACS_ACCESS_READ_CONTROL
+    | KACS_ACCESS_SYNCHRONIZE;
 const FILE_ALL: u32 = KACS_FILE_READ_DATA
     | KACS_FILE_WRITE_DATA
     | KACS_FILE_APPEND_DATA
@@ -138,14 +140,15 @@ fn build_open_how(p: &peios_open_params) -> Result<kacs_open_how, c_int> {
     if p.sd.is_null() && p.sd_len != 0 {
         return Err(libc::EINVAL);
     }
-    let mut how = kacs_open_how::default();
-    how.desired_access = p.desired_access;
-    how.create_disposition = p.disposition;
-    how.create_options = p.options;
-    how.flags = p.flags;
-    how.sd_ptr = p.sd as usize as u64;
-    how.sd_len = u32_len(p.sd_len)?;
-    Ok(how)
+    Ok(kacs_open_how {
+        desired_access: p.desired_access,
+        create_disposition: p.disposition,
+        create_options: p.options,
+        flags: p.flags,
+        sd_ptr: p.sd as usize as u64,
+        sd_len: u32_len(p.sd_len)?,
+        ..Default::default()
+    })
 }
 
 /// `peios_file_open` — native KACS open of `path` relative to `dirfd`.
@@ -410,6 +413,10 @@ pub unsafe extern "C" fn peios_mount_get_policy(
         set_errno(libc::EINVAL);
         return -1;
     };
+    if tmpl_cap != 0 && tmpl_buf.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     let cap32 = match u32_len(tmpl_cap) {
         Ok(cap32) => cap32,
         Err(errno) => {
@@ -419,9 +426,11 @@ pub unsafe extern "C" fn peios_mount_get_policy(
     };
     // Offer the template buffer; the kernel fills the rest in-place and reports
     // the true template length whether or not it copied.
-    let mut args = kacs_mount_policy_args::default();
-    args.template_sd_ptr = tmpl_buf as usize as u64;
-    args.template_sd_len = cap32;
+    let mut args = kacs_mount_policy_args {
+        template_sd_ptr: tmpl_buf as usize as u64,
+        template_sd_len: cap32,
+        ..Default::default()
+    };
     let r = syscall3(
         SYS_KACS_GET_MOUNT_POLICY,
         fd as c_long,
@@ -456,14 +465,15 @@ pub unsafe extern "C" fn peios_mount_get_policy(
 /// # Safety
 /// `p` valid; `p->template_sd` valid for `template_sd_len` bytes when non-NULL.
 #[no_mangle]
-pub unsafe extern "C" fn peios_mount_set_policy(
-    fd: c_int,
-    p: *const peios_mount_policy,
-) -> c_int {
+pub unsafe extern "C" fn peios_mount_set_policy(fd: c_int, p: *const peios_mount_policy) -> c_int {
     let Some(p) = p.as_ref() else {
         set_errno(libc::EINVAL);
         return -1;
     };
+    if p.template_sd_len != 0 && p.template_sd.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     let template_sd_len = match u32_len(p.template_sd_len) {
         Ok(len) => len,
         Err(errno) => {
@@ -471,12 +481,14 @@ pub unsafe extern "C" fn peios_mount_set_policy(
             return -1;
         }
     };
-    let mut args = kacs_mount_policy_args::default();
-    args.policy = p.policy;
-    args.flags = p.flags;
-    args.generation = p.generation;
-    args.template_sd_ptr = p.template_sd as usize as u64;
-    args.template_sd_len = template_sd_len;
+    let args = kacs_mount_policy_args {
+        policy: p.policy,
+        flags: p.flags,
+        generation: p.generation,
+        template_sd_ptr: p.template_sd as usize as u64,
+        template_sd_len,
+        ..Default::default()
+    };
     ret_int(syscall3(
         SYS_KACS_SET_MOUNT_POLICY,
         fd as c_long,
@@ -552,6 +564,41 @@ mod tests {
             sd_len: 16,
         };
         assert!(matches!(build_open_how(&p), Err(e) if e == libc::EINVAL));
+    }
+
+    #[test]
+    fn mount_get_rejects_null_template_buffer_with_capacity() {
+        unsafe {
+            let mut out = peios_mount_policy {
+                policy: 0,
+                flags: 0,
+                generation: 0,
+                template_sd: core::ptr::null(),
+                template_sd_len: 0,
+            };
+
+            assert_eq!(
+                peios_mount_get_policy(-1, &mut out, core::ptr::null_mut(), 1),
+                -1
+            );
+            assert_eq!(get_errno(), libc::EINVAL);
+        }
+    }
+
+    #[test]
+    fn mount_set_rejects_null_template_with_length() {
+        unsafe {
+            let p = peios_mount_policy {
+                policy: 0,
+                flags: 0,
+                generation: 0,
+                template_sd: core::ptr::null(),
+                template_sd_len: 1,
+            };
+
+            assert_eq!(peios_mount_set_policy(-1, &p), -1);
+            assert_eq!(get_errno(), libc::EINVAL);
+        }
     }
 
     #[test]

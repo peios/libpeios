@@ -139,7 +139,8 @@ uint32_t peios_access_map_generic(uint32_t mask,
  * left NULL/0:
  *   - object ACEs (KACS_ACE_TYPE_*_OBJECT) read @object_type /
  *     @inherited_object_type (each a 16-byte GUID, or NULL if absent);
- *   - callback and resource-attribute ACEs carry trailing @app_data.
+ *   - callback and resource-attribute ACEs carry trailing @app_data (NULL only
+ *     when @app_data_len is zero).
  * @sid is the trustee; @mask is the access mask; @flags are KACS_ACE_FLAG_*.
  */
 struct peios_ace_spec {
@@ -184,7 +185,8 @@ void peios_acl_builder_add(peios_acl_builder *b, const struct peios_ace_spec *ac
 /*
  * The serialized ACL. peios_acl_builder_bytes() returns a pointer into the
  * builder valid until the next mutating call, reset, or free (NULL if the
- * sticky error is set); peios_acl_builder_finish() copies it out, getxattr-style.
+ * sticky error is set), writing its length to @len_out if non-NULL;
+ * peios_acl_builder_finish() copies it out, getxattr-style.
  */
 const void *peios_acl_builder_bytes(peios_acl_builder *b, size_t *len_out);
 ssize_t	    peios_acl_builder_finish(peios_acl_builder *b, void *buf, size_t cap);
@@ -226,6 +228,8 @@ void peios_sd_builder_dacl(peios_sd_builder *b, const void *acl, size_t len);
 void peios_sd_builder_dacl_null(peios_sd_builder *b);
 void peios_sd_builder_sacl(peios_sd_builder *b, const void *acl, size_t len);
 
+/* Borrow the serialized SD; @len_out may be NULL if the caller only needs the
+ * pointer. peios_sd_builder_finish() copies it out, getxattr-style. */
 const void *peios_sd_builder_bytes(peios_sd_builder *b, size_t *len_out);
 ssize_t	    peios_sd_builder_finish(peios_sd_builder *b, void *buf, size_t cap);
 int	    peios_sd_builder_error(const peios_sd_builder *b);

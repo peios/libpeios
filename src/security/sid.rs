@@ -217,25 +217,21 @@ pub unsafe extern "C" fn peios_sid_logon(out: *mut c_void, cap: usize, session_i
 /// `which` is the C `enum peios_wks` value (an `int`); out-of-range yields
 /// `EINVAL`.
 #[no_mangle]
-pub unsafe extern "C" fn peios_sid_well_known(
-    out: *mut c_void,
-    cap: usize,
-    which: c_int,
-) -> isize {
+pub unsafe extern "C" fn peios_sid_well_known(out: *mut c_void, cap: usize, which: c_int) -> isize {
     let (authority, subs): (u64, &[u32]) = match which {
-        0 => (0, &[0]),         // PEIOS_WKS_NULL                S-1-0-0
-        1 => (1, &[0]),         // PEIOS_WKS_EVERYONE            S-1-1-0
-        2 => (2, &[0]),         // PEIOS_WKS_LOCAL               S-1-2-0
-        3 => (3, &[0]),         // PEIOS_WKS_CREATOR_OWNER       S-1-3-0
-        4 => (3, &[1]),         // PEIOS_WKS_CREATOR_GROUP       S-1-3-1
-        5 => (3, &[4]),         // PEIOS_WKS_OWNER_RIGHTS        S-1-3-4
-        6 => (5, &[7]),         // PEIOS_WKS_ANONYMOUS           S-1-5-7
-        7 => (5, &[10]),        // PEIOS_WKS_SELF                S-1-5-10
-        8 => (5, &[11]),        // PEIOS_WKS_AUTHENTICATED_USERS S-1-5-11
-        9 => (5, &[18]),        // PEIOS_WKS_SYSTEM              S-1-5-18
-        10 => (5, &[19]),       // PEIOS_WKS_LOCAL_SERVICE       S-1-5-19
-        11 => (5, &[20]),       // PEIOS_WKS_NETWORK_SERVICE     S-1-5-20
-        12 => (5, &[32, 544]),  // PEIOS_WKS_ADMINISTRATORS      S-1-5-32-544
+        0 => (0, &[0]),        // PEIOS_WKS_NULL                S-1-0-0
+        1 => (1, &[0]),        // PEIOS_WKS_EVERYONE            S-1-1-0
+        2 => (2, &[0]),        // PEIOS_WKS_LOCAL               S-1-2-0
+        3 => (3, &[0]),        // PEIOS_WKS_CREATOR_OWNER       S-1-3-0
+        4 => (3, &[1]),        // PEIOS_WKS_CREATOR_GROUP       S-1-3-1
+        5 => (3, &[4]),        // PEIOS_WKS_OWNER_RIGHTS        S-1-3-4
+        6 => (5, &[7]),        // PEIOS_WKS_ANONYMOUS           S-1-5-7
+        7 => (5, &[10]),       // PEIOS_WKS_SELF                S-1-5-10
+        8 => (5, &[11]),       // PEIOS_WKS_AUTHENTICATED_USERS S-1-5-11
+        9 => (5, &[18]),       // PEIOS_WKS_SYSTEM              S-1-5-18
+        10 => (5, &[19]),      // PEIOS_WKS_LOCAL_SERVICE       S-1-5-19
+        11 => (5, &[20]),      // PEIOS_WKS_NETWORK_SERVICE     S-1-5-20
+        12 => (5, &[32, 544]), // PEIOS_WKS_ADMINISTRATORS      S-1-5-32-544
         _ => {
             set_errno(libc::EINVAL);
             return -1;
@@ -321,9 +317,7 @@ mod tests {
     }
 
     /// Two-call encode into an exactly-sized Vec via any `emit`-style entry.
-    unsafe fn collect(
-        f: impl Fn(*mut c_void, usize) -> isize,
-    ) -> Result<Vec<u8>, c_int> {
+    unsafe fn collect(f: impl Fn(*mut c_void, usize) -> isize) -> Result<Vec<u8>, c_int> {
         let need = f(ptr::null_mut(), 0);
         if need < 0 {
             return Err(errno());
@@ -403,17 +397,29 @@ mod tests {
     #[test]
     fn integrity_and_logon() {
         unsafe {
-            assert_eq!(format(&collect(|o, c| peios_sid_integrity(o, c, 8192)).unwrap()), "S-1-16-8192");
+            assert_eq!(
+                format(&collect(|o, c| peios_sid_integrity(o, c, 8192)).unwrap()),
+                "S-1-16-8192"
+            );
             // session 0x0000_0003_0000_03E7 -> hi=3, lo=999
             let session = (3u64 << 32) | 999;
-            assert_eq!(format(&collect(|o, c| peios_sid_logon(o, c, session)).unwrap()), "S-1-5-5-3-999");
+            assert_eq!(
+                format(&collect(|o, c| peios_sid_logon(o, c, session)).unwrap()),
+                "S-1-5-5-3-999"
+            );
         }
     }
 
     #[test]
     fn parse_string_roundtrips_format() {
         unsafe {
-            for text in ["S-1-0-0", "S-1-5-18", "S-1-5-32-544", "S-1-16-12288", "S-1-5-5-3-999"] {
+            for text in [
+                "S-1-0-0",
+                "S-1-5-18",
+                "S-1-5-32-544",
+                "S-1-16-12288",
+                "S-1-5-5-3-999",
+            ] {
                 let sid = parse_string(text).unwrap();
                 assert_eq!(format(&sid), text);
             }
@@ -437,13 +443,17 @@ mod tests {
         unsafe {
             for bad in [
                 "garbage",
-                "S-2-5",                  // wrong revision
-                "S-1-",                   // empty authority
-                "S-1-5-",                 // trailing empty sub-authority
-                "S-1-5-99999999999",      // sub-authority overflows u32
+                "S-2-5",                                        // wrong revision
+                "S-1-",                                         // empty authority
+                "S-1-5-",                                       // trailing empty sub-authority
+                "S-1-5-99999999999",                            // sub-authority overflows u32
                 "S-1-5-1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16", // too many subs
             ] {
-                assert_eq!(parse_string(bad), Err(libc::EINVAL), "expected EINVAL for {bad:?}");
+                assert_eq!(
+                    parse_string(bad),
+                    Err(libc::EINVAL),
+                    "expected EINVAL for {bad:?}"
+                );
             }
         }
     }
@@ -456,9 +466,15 @@ mod tests {
             // A buffer with trailing slop is not "valid of exactly len bytes".
             let mut padded = sid.clone();
             padded.push(0);
-            assert!(!peios_sid_valid(padded.as_ptr() as *const c_void, padded.len()));
+            assert!(!peios_sid_valid(
+                padded.as_ptr() as *const c_void,
+                padded.len()
+            ));
             // Truncated.
-            assert!(!peios_sid_valid(sid.as_ptr() as *const c_void, sid.len() - 1));
+            assert!(!peios_sid_valid(
+                sid.as_ptr() as *const c_void,
+                sid.len() - 1
+            ));
 
             assert_eq!(peios_sid_length(sid.as_ptr() as *const c_void), sid.len());
             assert_eq!(peios_sid_rid(sid.as_ptr() as *const c_void, sid.len()), 544);
@@ -466,8 +482,18 @@ mod tests {
             let same = build(5, &[32, 544]);
             let other = build(5, &[32, 545]);
             let p = |v: &[u8]| (v.as_ptr() as *const c_void, v.len());
-            assert!(peios_sid_equal(p(&sid).0, p(&sid).1, p(&same).0, p(&same).1));
-            assert!(!peios_sid_equal(p(&sid).0, p(&sid).1, p(&other).0, p(&other).1));
+            assert!(peios_sid_equal(
+                p(&sid).0,
+                p(&sid).1,
+                p(&same).0,
+                p(&same).1
+            ));
+            assert!(!peios_sid_equal(
+                p(&sid).0,
+                p(&sid).1,
+                p(&other).0,
+                p(&other).1
+            ));
         }
     }
 

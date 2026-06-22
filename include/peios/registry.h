@@ -83,6 +83,8 @@ int peios_reg_create_key(int parent_fd, const char *path, uint32_t desired_acces
  * is too small they return -1/ERANGE with the *required* length in the matching
  * *_len field (so a zero-capacity buffer probes the size). For a two-buffer read,
  * ERANGE is returned if either buffer is too small and both required lengths report.
+ * A NULL output buffer is valid only with zero capacity; NULL with nonzero capacity
+ * is EINVAL.
  */
 
 /*
@@ -183,7 +185,8 @@ int peios_reg_enum_value(int key_fd, uint32_t index, int txn_fd,
 
 /*
  * Descriptor for peios_reg_enum_subkey: a name buffer (in) plus the child key's
- * metadata (out). A NULL name buffer with zero capacity probes the name length.
+ * metadata (out). A NULL name buffer with zero capacity probes the name length;
+ * NULL with nonzero capacity is EINVAL.
  */
 struct peios_reg_subkey {
 	void	       *name;		/* in:  buffer for the child's name (NULL to probe) */
@@ -206,6 +209,7 @@ int peios_reg_enum_subkey(int key_fd, uint32_t index, int txn_fd,
  * Descriptor for peios_reg_query_key_info: a name buffer (in) plus the key's
  * metadata (out). The kernel reports metadata only once the name fits, so size the
  * name buffer first (a zero-capacity probe returns ERANGE with the required name_len).
+ * A NULL name buffer with nonzero capacity is EINVAL.
  */
 struct peios_reg_key_info {
 	void	       *name;		/* in:  buffer for the key's leaf name (NULL to probe) */
@@ -267,7 +271,7 @@ int peios_reg_flush(int key_fd);
  * peios_reg_get_security - read the @security_info components of the key's SD into
  * @sd (KACS binary format), writing the length to *@sd_len_out (may be NULL). A
  * too-small buffer returns -1/ERANGE with the required size there (a zero @cap
- * probes). Owner/group/DACL need READ_CONTROL; the SACL needs
+ * probes). A NULL @sd with nonzero @cap is EINVAL. Owner/group/DACL need READ_CONTROL; the SACL needs
  * ACCESS_SYSTEM_SECURITY. Returns 0, or -1 with errno.
  */
 int peios_reg_get_security(int key_fd, uint32_t security_info, void *sd, uint32_t cap,

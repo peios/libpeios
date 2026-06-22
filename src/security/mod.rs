@@ -2,8 +2,8 @@
 //!
 //! The module splits along the header's sections: [`sid`] covers the SID
 //! helpers (build / parse-string / format / well-known / integrity / logon and
-//! the inspectors). ACL and security-descriptor builders and the zero-copy
-//! views land in sibling modules as they are implemented.
+//! the inspectors). ACL and security-descriptor builders, mapping tables, and
+//! zero-copy views live in sibling modules.
 
 pub mod acl_builder;
 pub mod mapping;

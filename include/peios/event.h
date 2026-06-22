@@ -6,7 +6,7 @@
  * metadata (timestamp, per-CPU sequence, CPU id, identity GUIDs) and writes it
  * into a per-CPU lock-free ring buffer; there is no other way to emit or observe
  * events. Producers emit here; consumers attach to and drain the ring buffers
- * (a later slice of this header). Each event payload is a single MessagePack
+ * through this header. Each event payload is a single MessagePack
  * value — build and parse them with <peios/msgpack.h>.
  *
  * Emission requires SeAuditPrivilege. The kernel validates the payload (it must
@@ -116,7 +116,7 @@ void		    peios_event_reader_close(peios_event_reader *r);
 /*
  * Fetch the next event into @out. Returns 1 (event filled), 0 (none available —
  * consider peios_event_reader_wait), or -1 with errno. The @out pointers are
- * valid only until the next call.
+ * valid only until the next call. @out must be non-NULL.
  */
 int peios_event_reader_next(peios_event_reader *r, struct peios_event *out);
 
@@ -141,7 +141,9 @@ struct peios_event_ring {
 	uint64_t _opaque[4];
 };
 
-/* Map (and validate) a ring fd from peios_event_attach. 0, or -1 with errno. */
+/* Map (and validate) a ring fd from peios_event_attach. @ring must be zeroed or
+ * previously unmapped; remapping an active ring fails with EBUSY. 0, or -1 with
+ * errno. */
 int  peios_event_ring_map(int fd, uint64_t capacity, struct peios_event_ring *ring);
 void peios_event_ring_unmap(struct peios_event_ring *ring);
 
@@ -156,7 +158,8 @@ void peios_event_ring_set_need_wake(const struct peios_event_ring *ring, int set
 /*
  * Parse the event at @read_pos into @out; returns its byte size (advance read_pos
  * by it), or -1 if the slot is corrupt. The caller must have confirmed read_pos
- * is in [tail_pos, write_pos).
+ * is in [tail_pos, write_pos). @out may be NULL to validate the slot and return
+ * the byte size without borrowing event_type/payload pointers.
  */
 ssize_t peios_event_ring_event_at(const struct peios_event_ring *ring,
 				  uint64_t read_pos, struct peios_event *out);

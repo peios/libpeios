@@ -36,6 +36,8 @@ parse_deps = false
 [export]
 # Keep only our public ABI; the uapi types arrive via the includes above.
 prefix = ""
+# The crate imports libc abort for the panic handler; it is not a libpeios export.
+exclude = ["abort"]
 
 # The KACS uapi types we pass by value/pointer are tag-only `struct kacs_*` in the
 # <pkm/*.h> headers; cbindgen sees them as opaque externals and would emit them bare.

@@ -8,7 +8,8 @@
 //! SD calls exchange — so the kernel parses and validates it directly; libpeios
 //! passes a caller-supplied SD straight through (mirroring [`crate::file`]'s
 //! `set_sd`). The read uses the registry-wide fill-or-`ERANGE` contract: a
-//! zero-capacity buffer probes the required size.
+//! zero-capacity buffer probes the required size, while NULL with nonzero capacity
+//! is `EINVAL`.
 //!
 //! Note: SD changes are direct (not layer-qualified) and affect only opens after
 //! the change — an existing key fd keeps the access mask it was granted at open.
@@ -17,7 +18,9 @@
 
 use core::ffi::{c_int, c_void};
 
-use peios_uapi::{reg_get_security_args, reg_set_security_args, REG_IOC_GET_SECURITY, REG_IOC_SET_SECURITY};
+use peios_uapi::{
+    reg_get_security_args, reg_set_security_args, REG_IOC_GET_SECURITY, REG_IOC_SET_SECURITY,
+};
 
 use crate::error::{get_errno, set_errno};
 
@@ -33,8 +36,8 @@ const _: () = assert!(core::mem::size_of::<reg_set_security_args>() == 24);
 /// length to `*sd_len_out` (if non-NULL). A too-small buffer returns `-1` / `ERANGE`
 /// with the required size in `*sd_len_out`, so a zero `cap` probes the size.
 /// Reading owner/group/DACL needs `READ_CONTROL`; the SACL needs
-/// `ACCESS_SYSTEM_SECURITY`. Returns 0, or `-1` with `errno` (`ERANGE`, `EACCES`,
-/// `EFAULT`).
+/// `ACCESS_SYSTEM_SECURITY`. Returns 0, or `-1` with `errno` (`EINVAL`, `ERANGE`,
+/// `EACCES`, `EFAULT`).
 ///
 /// # Safety
 /// `sd` valid for `cap` bytes when `cap != 0`; `sd_len_out` NULL or valid for a
@@ -47,15 +50,18 @@ pub unsafe extern "C" fn peios_reg_get_security(
     cap: u32,
     sd_len_out: *mut u32,
 ) -> c_int {
-    let mut a = reg_get_security_args::default();
-    a.security_info = security_info;
-    a.sd_len = cap; // in: capacity (overwritten with the written/required length)
-    a.sd_ptr = sd as usize as u64;
+    if cap != 0 && sd.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut a = reg_get_security_args {
+        security_info,
+        sd_len: cap, // in: capacity (overwritten with the written/required length)
+        sd_ptr: sd as usize as u64,
+    };
     let r = ioctl_struct(key_fd, REG_IOC_GET_SECURITY, &mut a);
-    if r == 0 || get_errno() == libc::ERANGE {
-        if !sd_len_out.is_null() {
-            *sd_len_out = a.sd_len;
-        }
+    if (r == 0 || get_errno() == libc::ERANGE) && !sd_len_out.is_null() {
+        *sd_len_out = a.sd_len;
     }
     r
 }
@@ -86,11 +92,13 @@ pub unsafe extern "C" fn peios_reg_set_security(
         set_errno(libc::EINVAL);
         return -1;
     }
-    let mut a = reg_set_security_args::default();
-    a.security_info = security_info;
-    a.sd_len = sd_len;
-    a.sd_ptr = sd as usize as u64;
-    a.txn_fd = txn_fd;
+    let mut a = reg_set_security_args {
+        security_info,
+        sd_len,
+        sd_ptr: sd as usize as u64,
+        txn_fd,
+        ..Default::default()
+    };
     ioctl_struct(key_fd, REG_IOC_SET_SECURITY, &mut a)
 }
 
@@ -109,6 +117,15 @@ mod tests {
     fn set_security_rejects_empty_sd() {
         // NULL SD or zero length is EINVAL before any ioctl.
         let r = unsafe { peios_reg_set_security(-1, 0x4, core::ptr::null(), 0, -1) };
+        assert_eq!(r, -1);
+        assert_eq!(errno(), libc::EINVAL);
+    }
+
+    #[test]
+    fn get_security_rejects_null_buffer_with_capacity() {
+        let r = unsafe {
+            peios_reg_get_security(-1, 0x4, core::ptr::null_mut(), 1, core::ptr::null_mut())
+        };
         assert_eq!(r, -1);
         assert_eq!(errno(), libc::EINVAL);
     }

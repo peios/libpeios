@@ -15,9 +15,10 @@
 //! the actual length(s) reported. If a buffer is too small the call returns `-1` /
 //! `ERANGE` and writes the *required* length into the corresponding `*_len` field,
 //! so the caller can resize and retry; a zero-capacity buffer is therefore a valid
-//! size probe (it comes back `ERANGE` with the needed sizes). For the two-buffer
-//! ops, `ERANGE` is returned if *either* buffer is too small and *both* required
-//! lengths are reported. This mirrors the `_IOWR` handlers exactly — no reshaping.
+//! size probe (it comes back `ERANGE` with the needed sizes). A NULL buffer with a
+//! nonzero capacity is rejected locally with `EINVAL`. For the two-buffer ops,
+//! `ERANGE` is returned if *either* buffer is too small and *both* required lengths
+//! are reported. This mirrors the `_IOWR` handlers exactly — no reshaping.
 //!
 //! Only the argument marshalling is `cargo test`-covered; the ioctls themselves are
 //! exercised live under Provium.
@@ -27,13 +28,13 @@
 use core::ffi::{c_int, c_void};
 
 use peios_uapi::{
-    reg_blanket_tombstone_args, reg_delete_value_args, reg_enum_value_args,
-    reg_query_value_args, reg_query_values_batch_args, reg_set_value_args, REG_IOC_BLANKET_TOMBSTONE,
+    reg_blanket_tombstone_args, reg_delete_value_args, reg_enum_value_args, reg_query_value_args,
+    reg_query_values_batch_args, reg_set_value_args, REG_IOC_BLANKET_TOMBSTONE,
     REG_IOC_DELETE_VALUE, REG_IOC_ENUM_VALUES, REG_IOC_QUERY_VALUE, REG_IOC_QUERY_VALUES_BATCH,
     REG_IOC_SET_VALUE,
 };
 
-use crate::error::get_errno;
+use crate::error::{get_errno, set_errno};
 
 use super::ioctl_struct;
 
@@ -45,6 +46,10 @@ const _: () = assert!(core::mem::size_of::<reg_delete_value_args>() == 40);
 const _: () = assert!(core::mem::size_of::<reg_blanket_tombstone_args>() == 24);
 const _: () = assert!(core::mem::size_of::<reg_query_values_batch_args>() == 24);
 const _: () = assert!(core::mem::size_of::<reg_enum_value_args>() == 40);
+
+fn out_buf_valid(ptr: *const c_void, cap: u32) -> bool {
+    cap == 0 || !ptr.is_null()
+}
 
 // ----------------------------------------------------------------------------
 // query_value
@@ -82,15 +87,16 @@ fn build_query_value_args(
     txn_fd: c_int,
     v: &peios_reg_value,
 ) -> reg_query_value_args {
-    let mut a = reg_query_value_args::default();
-    a.name_len = name_len;
-    a.name_ptr = name as usize as u64;
-    a.data_ptr = v.data as usize as u64;
-    a.data_len = v.data_cap; // in: capacity (overwritten with the actual length)
-    a.layer_ptr = v.layer as usize as u64;
-    a.layer_buf_len = v.layer_cap; // in: capacity
-    a.txn_fd = txn_fd;
-    a
+    reg_query_value_args {
+        name_len,
+        name_ptr: name as usize as u64,
+        data_ptr: v.data as usize as u64,
+        data_len: v.data_cap, // in: capacity (overwritten with the actual length)
+        layer_ptr: v.layer as usize as u64,
+        layer_buf_len: v.layer_cap, // in: capacity
+        txn_fd,
+        ..Default::default()
+    }
 }
 
 /// `peios_reg_query_value` — read the effective value named `name` on the key.
@@ -103,7 +109,7 @@ fn build_query_value_args(
 ///
 /// # Safety
 /// `name` valid for `name_len` bytes (or NULL when `name_len == 0`); `v` valid for
-/// writing, with `v->data` / `v->layer` valid for their capacities when non-NULL.
+/// writing, with `v->data` / `v->layer` valid for their capacities when nonzero.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_query_value(
     key_fd: c_int,
@@ -113,9 +119,13 @@ pub unsafe extern "C" fn peios_reg_query_value(
     v: *mut peios_reg_value,
 ) -> c_int {
     let Some(v) = v.as_mut() else {
-        crate::error::set_errno(libc::EINVAL);
+        set_errno(libc::EINVAL);
         return -1;
     };
+    if !out_buf_valid(v.data, v.data_cap) || !out_buf_valid(v.layer, v.layer_cap) {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     let mut a = build_query_value_args(name, name_len, txn_fd, v);
     let r = ioctl_struct(key_fd, REG_IOC_QUERY_VALUE, &mut a);
     if r == 0 {
@@ -137,8 +147,7 @@ pub unsafe extern "C" fn peios_reg_query_value(
 // set_value / delete_value / blanket_tombstone
 // ----------------------------------------------------------------------------
 
-/// Pack the set-value arguments. Pure.
-fn build_set_value_args(
+struct SetValueInput {
     name: *const c_void,
     name_len: u32,
     type_: u32,
@@ -148,18 +157,22 @@ fn build_set_value_args(
     layer_len: u32,
     txn_fd: c_int,
     expected_seq: u64,
-) -> reg_set_value_args {
-    let mut a = reg_set_value_args::default();
-    a.name_len = name_len;
-    a.name_ptr = name as usize as u64;
-    a.type_ = type_;
-    a.data_len = data_len;
-    a.data_ptr = data as usize as u64;
-    a.layer_len = layer_len;
-    a.layer_ptr = layer as usize as u64;
-    a.txn_fd = txn_fd;
-    a.expected_seq = expected_seq;
-    a
+}
+
+/// Pack the set-value arguments. Pure.
+fn build_set_value_args(input: SetValueInput) -> reg_set_value_args {
+    reg_set_value_args {
+        name_len: input.name_len,
+        name_ptr: input.name as usize as u64,
+        type_: input.type_,
+        data_len: input.data_len,
+        data_ptr: input.data as usize as u64,
+        layer_len: input.layer_len,
+        layer_ptr: input.layer as usize as u64,
+        txn_fd: input.txn_fd,
+        expected_seq: input.expected_seq,
+        ..Default::default()
+    }
 }
 
 /// `peios_reg_set_value` — write the value `name` in a specific layer.
@@ -187,7 +200,7 @@ pub unsafe extern "C" fn peios_reg_set_value(
     txn_fd: c_int,
     expected_seq: u64,
 ) -> c_int {
-    let mut a = build_set_value_args(
+    let mut a = build_set_value_args(SetValueInput {
         name,
         name_len,
         type_,
@@ -197,7 +210,7 @@ pub unsafe extern "C" fn peios_reg_set_value(
         layer_len,
         txn_fd,
         expected_seq,
-    );
+    });
     ioctl_struct(key_fd, REG_IOC_SET_VALUE, &mut a)
 }
 
@@ -209,13 +222,14 @@ fn build_delete_value_args(
     layer_len: u32,
     txn_fd: c_int,
 ) -> reg_delete_value_args {
-    let mut a = reg_delete_value_args::default();
-    a.name_len = name_len;
-    a.name_ptr = name as usize as u64;
-    a.layer_len = layer_len;
-    a.layer_ptr = layer as usize as u64;
-    a.txn_fd = txn_fd;
-    a
+    reg_delete_value_args {
+        name_len,
+        name_ptr: name as usize as u64,
+        layer_len,
+        layer_ptr: layer as usize as u64,
+        txn_fd,
+        ..Default::default()
+    }
 }
 
 /// `peios_reg_delete_value` — remove a layer's entry for the value `name`.
@@ -248,12 +262,13 @@ fn build_blanket_tombstone_args(
     set: c_int,
     txn_fd: c_int,
 ) -> reg_blanket_tombstone_args {
-    let mut a = reg_blanket_tombstone_args::default();
-    a.layer_len = layer_len;
-    a.layer_ptr = layer as usize as u64;
-    a.set = set as u8;
-    a.txn_fd = txn_fd;
-    a
+    reg_blanket_tombstone_args {
+        layer_len,
+        layer_ptr: layer as usize as u64,
+        set: set as u8,
+        txn_fd,
+        ..Default::default()
+    }
 }
 
 /// `peios_reg_blanket_tombstone` — set (`set != 0`) or clear (`set == 0`) a blanket
@@ -274,6 +289,10 @@ pub unsafe extern "C" fn peios_reg_blanket_tombstone(
     set: c_int,
     txn_fd: c_int,
 ) -> c_int {
+    if set != 0 && set != 1 {
+        crate::error::set_errno(libc::EINVAL);
+        return -1;
+    }
     let mut a = build_blanket_tombstone_args(layer, layer_len, set, txn_fd);
     ioctl_struct(key_fd, REG_IOC_BLANKET_TOMBSTONE, &mut a)
 }
@@ -303,10 +322,16 @@ pub unsafe extern "C" fn peios_reg_query_values_batch(
     len_out: *mut u32,
     count_out: *mut u32,
 ) -> c_int {
-    let mut a = reg_query_values_batch_args::default();
-    a.buf_len = cap; // in: capacity (overwritten with the written/required length)
-    a.buf_ptr = buf as usize as u64;
-    a.txn_fd = txn_fd;
+    if !out_buf_valid(buf, cap) {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut a = reg_query_values_batch_args {
+        buf_len: cap, // in: capacity (overwritten with the written/required length)
+        buf_ptr: buf as usize as u64,
+        txn_fd,
+        ..Default::default()
+    };
     let r = ioctl_struct(key_fd, REG_IOC_QUERY_VALUES_BATCH, &mut a);
     // The kernel writes buf_len/count back on success and the required length on
     // ERANGE; surface both in either case.
@@ -351,14 +376,15 @@ fn build_enum_value_args(
     txn_fd: c_int,
     v: &peios_reg_enum_value,
 ) -> reg_enum_value_args {
-    let mut a = reg_enum_value_args::default();
-    a.index = index;
-    a.name_len = v.name_cap; // in: capacity (overwritten with the actual length)
-    a.name_ptr = v.name as usize as u64;
-    a.data_len = v.data_cap; // in: capacity
-    a.data_ptr = v.data as usize as u64;
-    a.txn_fd = txn_fd;
-    a
+    reg_enum_value_args {
+        index,
+        name_len: v.name_cap, // in: capacity (overwritten with the actual length)
+        name_ptr: v.name as usize as u64,
+        data_len: v.data_cap, // in: capacity
+        data_ptr: v.data as usize as u64,
+        txn_fd,
+        ..Default::default()
+    }
 }
 
 /// `peios_reg_enum_value` — read the effective value at position `index`.
@@ -371,7 +397,7 @@ fn build_enum_value_args(
 ///
 /// # Safety
 /// `v` valid for writing, with `v->name` / `v->data` valid for their capacities
-/// when non-NULL.
+/// when nonzero.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_enum_value(
     key_fd: c_int,
@@ -380,9 +406,13 @@ pub unsafe extern "C" fn peios_reg_enum_value(
     v: *mut peios_reg_enum_value,
 ) -> c_int {
     let Some(v) = v.as_mut() else {
-        crate::error::set_errno(libc::EINVAL);
+        set_errno(libc::EINVAL);
         return -1;
     };
+    if !out_buf_valid(v.name, v.name_cap) || !out_buf_valid(v.data, v.data_cap) {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     let mut a = build_enum_value_args(index, txn_fd, v);
     let r = ioctl_struct(key_fd, REG_IOC_ENUM_VALUES, &mut a);
     if r == 0 {
@@ -401,6 +431,7 @@ pub unsafe extern "C" fn peios_reg_enum_value(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::get_errno;
     use peios_uapi::{REG_SZ, REG_TOMBSTONE};
 
     #[test]
@@ -441,21 +472,39 @@ mod tests {
     }
 
     #[test]
+    fn query_value_rejects_null_buffer_with_capacity() {
+        let mut v = peios_reg_value {
+            sequence: 0,
+            data: core::ptr::null_mut(),
+            layer: core::ptr::null_mut(),
+            type_: 0,
+            data_cap: 1,
+            data_len: 0,
+            layer_cap: 0,
+            layer_len: 0,
+        };
+
+        let r = unsafe { peios_reg_query_value(-1, core::ptr::null(), 0, -1, &mut v) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
+    }
+
+    #[test]
     fn set_value_args_pack_fields_and_tombstone_type() {
         let name = b"K";
         let data = [1u8, 2, 3, 4];
         let layer = b"overlay";
-        let a = build_set_value_args(
-            name.as_ptr() as *const c_void,
-            name.len() as u32,
-            REG_SZ,
-            data.as_ptr() as *const c_void,
-            data.len() as u32,
-            layer.as_ptr() as *const c_void,
-            layer.len() as u32,
-            9,
-            42,
-        );
+        let a = build_set_value_args(SetValueInput {
+            name: name.as_ptr() as *const c_void,
+            name_len: name.len() as u32,
+            type_: REG_SZ,
+            data: data.as_ptr() as *const c_void,
+            data_len: data.len() as u32,
+            layer: layer.as_ptr() as *const c_void,
+            layer_len: layer.len() as u32,
+            txn_fd: 9,
+            expected_seq: 42,
+        });
         assert_eq!(a.name_len, 1);
         assert_eq!(a.type_, REG_SZ);
         assert_eq!(a.data_len, 4);
@@ -469,17 +518,17 @@ mod tests {
         assert_eq!(a._pad2, 0);
 
         // A tombstone write is just type == REG_TOMBSTONE.
-        let t = build_set_value_args(
-            core::ptr::null(),
-            0,
-            REG_TOMBSTONE,
-            core::ptr::null(),
-            0,
-            core::ptr::null(),
-            0,
-            -1,
-            0,
-        );
+        let t = build_set_value_args(SetValueInput {
+            name: core::ptr::null(),
+            name_len: 0,
+            type_: REG_TOMBSTONE,
+            data: core::ptr::null(),
+            data_len: 0,
+            layer: core::ptr::null(),
+            layer_len: 0,
+            txn_fd: -1,
+            expected_seq: 0,
+        });
         assert_eq!(t.type_, REG_TOMBSTONE);
         assert_eq!(t.name_ptr, 0);
         assert_eq!(t.layer_ptr, 0); // base layer
@@ -488,13 +537,37 @@ mod tests {
     #[test]
     fn base_layer_is_null_ptr_zero_len() {
         // The kernel reads (layer_len == 0 && layer_ptr == NULL) as the base layer.
-        let d = build_delete_value_args(b"x".as_ptr() as *const c_void, 1, core::ptr::null(), 0, -1);
+        let d =
+            build_delete_value_args(b"x".as_ptr() as *const c_void, 1, core::ptr::null(), 0, -1);
         assert_eq!(d.layer_len, 0);
         assert_eq!(d.layer_ptr, 0);
         let b = build_blanket_tombstone_args(core::ptr::null(), 0, 1, -1);
         assert_eq!(b.layer_len, 0);
         assert_eq!(b.layer_ptr, 0);
         assert_eq!(b.set, 1);
+    }
+
+    #[test]
+    fn blanket_tombstone_rejects_non_boolean_set() {
+        let r = unsafe { peios_reg_blanket_tombstone(-1, core::ptr::null(), 0, 256, -1) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
+    }
+
+    #[test]
+    fn query_values_batch_rejects_null_buffer_with_capacity() {
+        let r = unsafe {
+            peios_reg_query_values_batch(
+                -1,
+                -1,
+                core::ptr::null_mut(),
+                1,
+                core::ptr::null_mut(),
+                core::ptr::null_mut(),
+            )
+        };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
     }
 
     #[test]
@@ -518,5 +591,22 @@ mod tests {
         assert_eq!(a.data_ptr, databuf.as_ptr() as usize as u64);
         assert_eq!(a.txn_fd, -1);
         assert_eq!(a._pad, 0);
+    }
+
+    #[test]
+    fn enum_value_rejects_null_buffer_with_capacity() {
+        let mut v = peios_reg_enum_value {
+            name: core::ptr::null_mut(),
+            data: core::ptr::null_mut(),
+            type_: 0,
+            name_cap: 1,
+            name_len: 0,
+            data_cap: 0,
+            data_len: 0,
+        };
+
+        let r = unsafe { peios_reg_enum_value(-1, 0, -1, &mut v) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
     }
 }

@@ -20,11 +20,11 @@ to prove, mechanically, that those headers never drift from the Rust
 
 ## Regenerating the snapshot
 
-cbindgen 0.29.2 (via nix; not on the default PATH):
+cbindgen 0.29.2:
 
 ```sh
 cd libpeios
-nix-shell -p rust-cbindgen --run 'cbindgen --config cbindgen.toml --lang c -o abi/peios-abi.h .'
+cbindgen --config cbindgen.toml --lang c -o abi/peios-abi.h .
 ```
 
 Regeneration is deterministic — same Rust source + same cbindgen version → identical
@@ -33,35 +33,38 @@ differently and cause a spurious step-1 diff.
 
 ## Verifying
 
-The script needs `cbindgen` on PATH; in this environment, run it under nix:
+The script needs `cbindgen 0.29.2` on PATH:
 
 ```sh
 cd libpeios
-nix-shell -p rust-cbindgen --run ./tools/verify-abi.sh
+./tools/verify-abi.sh
 ```
+
+If `cbindgen` is not installed locally, run either command under
+`nix-shell -p rust-cbindgen --run '...'`.
 
 It checks five things and exits non-zero on any mismatch:
 
 1. **Snapshot freshness** — regenerates and diffs against the committed
    `peios-abi.h`. A diff here means the Rust ABI changed but the snapshot wasn't
    updated.
-2. **Snapshot compiles** standalone in C and C++ (every type reference resolves
-   against the `<pkm/*.h>` uapi headers).
+2. **Snapshot and public umbrella compile** standalone in C and C++ (every type
+   reference resolves against the `<pkm/*.h>` uapi headers).
 3. **Function signatures** — every public prototype, compared between `<peios.h>`
    and the snapshot via `gcc -aux-info` (compiler-canonical prototypes).
-4. **Struct layouts** — `sizeof` + `_Alignof` of every public struct, compared
-   between the two header sets.
+4. **Struct layouts** — `sizeof`, `_Alignof`, and every public field offset,
+   compared between the two header sets.
 5. **Data symbols** — the `extern` objects (the generic-mapping tables).
 
-Steps 3–5 deliberately ignore differences that do **not** affect the ABI:
-parameter/field names (so the Rust-keyword field `type_` vs the C `type` is fine),
-`struct`/`enum` tags (opaque typedef vs tag), `ptrdiff_t`≡`ssize_t` /
-`uintptr_t`≡`size_t`, and the fact that a C `enum` has type `int`.
+Steps 3 and 5 deliberately ignore differences that do **not** affect the ABI:
+parameter names, `struct`/`enum` tags (opaque typedef vs tag),
+`ptrdiff_t`≡`ssize_t` / `uintptr_t`≡`size_t`, and the fact that a C `enum` has
+type `int`.
 
-The one residual gap is a same-size, same-alignment field *reordering* that the
-hand-written header mirrors inconsistently — step 4 compares size/alignment, not
-per-field offsets. The committed, human-readable snapshot (whose struct bodies show
-the authoritative field order) is the backstop for that; review it on change.
+The verifier derives public struct fields from the cbindgen snapshot and compares
+their C `offsetof` values against the hand-written headers. The only field-name
+normalisation is the Rust-keyword spelling `type_` in the snapshot versus `type`
+in the public C headers.
 
 ## The workflow when the ABI changes
 

@@ -42,6 +42,25 @@ unsafe fn ioc<T>(fd: c_int, request: c_ulong, arg: *mut T) -> c_int {
     ioctl(fd, request, arg.cast())
 }
 
+fn adjust_default_args(
+    dacl: *const c_void,
+    len: usize,
+    owner_index: u16,
+    group_index: u16,
+) -> Result<kacs_adjust_default_args, c_int> {
+    let dacl_len = if dacl.is_null() {
+        0
+    } else {
+        u32::try_from(len).map_err(|_| libc::EINVAL)?
+    };
+    Ok(kacs_adjust_default_args {
+        dacl_ptr: dacl as usize as u64,
+        dacl_len,
+        owner_index,
+        group_index,
+    })
+}
+
 // ----------------------------------------------------------------------------
 // Privileges / groups
 // ----------------------------------------------------------------------------
@@ -299,15 +318,12 @@ pub unsafe extern "C" fn peios_token_adjust_default(
     owner_index: u16,
     group_index: u16,
 ) -> c_int {
-    if len > u32::MAX as usize {
-        set_errno(libc::EINVAL);
-        return -1;
-    }
-    let mut args = kacs_adjust_default_args {
-        dacl_ptr: dacl as usize as u64,
-        dacl_len: len as u32,
-        owner_index,
-        group_index,
+    let mut args = match adjust_default_args(dacl, len, owner_index, group_index) {
+        Ok(args) => args,
+        Err(errno) => {
+            set_errno(errno);
+            return -1;
+        }
     };
     if ioc(fd, KACS_IOC_ADJUST_DEFAULT as c_ulong, &mut args) < 0 {
         return -1;
@@ -349,5 +365,30 @@ mod tests {
     #[test]
     fn restrict_payload_empty() {
         assert_eq!(pack_restrict(&[], &[]).unwrap(), Vec::<u8>::new());
+    }
+
+    #[test]
+    fn adjust_default_null_dacl_ignores_len() {
+        let args = adjust_default_args(core::ptr::null(), usize::MAX, 0xFFFF, 0xFFFF).unwrap();
+        assert_eq!(args.dacl_ptr, 0);
+        assert_eq!(args.dacl_len, 0);
+        assert_eq!(args.owner_index, 0xFFFF);
+        assert_eq!(args.group_index, 0xFFFF);
+    }
+
+    #[test]
+    fn adjust_default_non_null_dacl_checks_len() {
+        let dacl = core::ptr::dangling::<c_void>();
+
+        let clear = adjust_default_args(dacl, 0, 1, 2).unwrap();
+        assert_eq!(clear.dacl_ptr, dacl as usize as u64);
+        assert_eq!(clear.dacl_len, 0);
+        assert_eq!(clear.owner_index, 1);
+        assert_eq!(clear.group_index, 2);
+
+        assert!(matches!(
+            adjust_default_args(dacl, u32::MAX as usize + 1, 0xFFFF, 0xFFFF),
+            Err(errno) if errno == libc::EINVAL
+        ));
     }
 }

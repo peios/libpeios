@@ -1,11 +1,11 @@
 //! Syscall-backed token operations — the fd-returning open/create calls of
-//! `<peios/token.h>` (and `peios_session_destroy_empty`).
+//! `<peios/token.h>` (plus the non-fd `peios_session_destroy_empty` and
+//! `peios_token_revert`).
 //!
 //! Each is a thin wrapper over a `SYS_KACS_*` syscall; the returned token fd
 //! carries `O_CLOEXEC` (set unconditionally by the kernel). These cross the
 //! kernel boundary, so they are exercised live under Provium, not in
-//! `cargo test`. The ioctl-backed actions (query/adjust/duplicate/…) land in a
-//! later slice.
+//! `cargo test`. Ioctl-backed token actions live in the sibling modules.
 
 #![allow(non_camel_case_types)]
 
@@ -16,13 +16,13 @@ use alloc::vec::Vec;
 use peios_uapi::{
     KACS_SESSION_SPEC_MAX_BYTES, SYS_KACS_CREATE_SESSION, SYS_KACS_CREATE_TOKEN,
     SYS_KACS_DESTROY_EMPTY_SESSION, SYS_KACS_OPEN_PEER_TOKEN, SYS_KACS_OPEN_PROCESS_TOKEN,
-    SYS_KACS_OPEN_SELF_TOKEN, SYS_KACS_OPEN_THREAD_TOKEN,
+    SYS_KACS_OPEN_SELF_TOKEN, SYS_KACS_OPEN_THREAD_TOKEN, SYS_KACS_REVERT,
 };
 
 use crate::abi::{cstr_bytes, try_extend};
 use crate::error::set_errno;
 use crate::security::sid_valid;
-use crate::sys::{ret_int, syscall1, syscall2, syscall3};
+use crate::sys::{ret_int, syscall0, syscall1, syscall2, syscall3};
 
 /// Mint a token from a spec buffer at `ptr`/`len`. Shared by
 /// `peios_token_create_raw` and `peios_token_builder_create`; the kernel
@@ -73,6 +73,16 @@ pub unsafe extern "C" fn peios_token_open_peer(conn_fd: c_int) -> c_int {
     ret_int(syscall1(SYS_KACS_OPEN_PEER_TOKEN, conn_fd as c_long))
 }
 
+/// `peios_token_revert` — revert the calling thread to its own identity,
+/// undoing any active impersonation (the inverse of `peios_token_impersonate`).
+/// Takes no token fd: it clears the calling thread's impersonation token, after
+/// which access checks run as the thread's real (primary) token again. A no-op,
+/// reported as success, if the thread is not impersonating.
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_revert() -> c_int {
+    ret_int(syscall0(SYS_KACS_REVERT))
+}
+
 /// `peios_token_create_raw` — mint a token from a pre-built spec buffer.
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_create_raw(spec: *const c_void, len: usize) -> c_int {
@@ -82,7 +92,10 @@ pub unsafe extern "C" fn peios_token_create_raw(spec: *const c_void, len: usize)
 /// `peios_session_destroy_empty` — destroy a logon session with no live tokens.
 #[no_mangle]
 pub unsafe extern "C" fn peios_session_destroy_empty(session_id: u64) -> c_int {
-    ret_int(syscall1(SYS_KACS_DESTROY_EMPTY_SESSION, session_id as c_long))
+    ret_int(syscall1(
+        SYS_KACS_DESTROY_EMPTY_SESSION,
+        session_id as c_long,
+    ))
 }
 
 /// `struct peios_session_spec` — inputs to `peios_session_create`.
@@ -130,6 +143,10 @@ pub unsafe extern "C" fn peios_session_create(
         set_errno(libc::EINVAL);
         return -1;
     };
+    if id_out.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     if spec.auth_package.is_null() || spec.user_sid.is_null() {
         set_errno(libc::EINVAL);
         return -1;
@@ -158,9 +175,7 @@ pub unsafe extern "C" fn peios_session_create(
     if r < 0 {
         return -1; // errno set by libc
     }
-    if !id_out.is_null() {
-        *id_out = r as u64;
-    }
+    *id_out = r as u64;
     0
 }
 
@@ -207,5 +222,21 @@ mod tests {
         let user = sid(5, &[18]);
         let big = vec![b'x'; KACS_SESSION_SPEC_MAX_BYTES as usize];
         assert_eq!(encode_session_spec(2, &big, &user), Err(libc::EINVAL));
+    }
+
+    #[test]
+    fn session_create_rejects_null_id_out_before_syscall() {
+        let user = sid(5, &[18]);
+        let auth = b"Negotiate\0";
+        let spec = peios_session_spec {
+            logon_type: 2,
+            auth_package: auth.as_ptr() as *const c_char,
+            user_sid: user.as_ptr() as *const c_void,
+            user_sid_len: user.len(),
+        };
+
+        let r = unsafe { peios_session_create(&spec, core::ptr::null_mut()) };
+        assert_eq!(r, -1);
+        assert_eq!(crate::error::get_errno(), libc::EINVAL);
     }
 }

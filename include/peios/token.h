@@ -89,6 +89,7 @@ void peios_token_builder_add_restricted_sid(peios_token_builder *b, const void *
 void peios_token_builder_add_device_group(peios_token_builder *b, const void *sid,
 					  size_t len, uint32_t attrs);
 void peios_token_builder_confinement(peios_token_builder *b, const void *sid, size_t len);
+/* Replace projected supplementary GIDs; pass NULL, 0 to clear. */
 void peios_token_builder_supp_gids(peios_token_builder *b, const uint32_t *gids,
 				   unsigned count);
 
@@ -147,8 +148,9 @@ struct peios_token_lcs_credentials {
 void peios_token_builder_lcs_credentials(peios_token_builder *b,
 					 const struct peios_token_lcs_credentials *creds);
 
-/* Serialize, or create the token in one step. _bytes() returns a pointer into
- * the builder (valid until reset/free); _create() returns the new token fd. */
+/* Serialize, or create the token in one step. _bytes() returns the serialized
+ * length and, if @out is non-NULL, a pointer into the builder (valid until
+ * reset/free); _create() returns the new token fd. */
 ssize_t peios_token_builder_bytes(peios_token_builder *b, const void **out);
 int	peios_token_builder_create(peios_token_builder *b);
 int	peios_token_builder_error(const peios_token_builder *b);
@@ -169,8 +171,12 @@ struct peios_privilege_set {
 	uint64_t used;
 };
 
-/* Typed convenience over peios_token_query() for the common scalar classes. */
+/* User SID, getxattr-style like peios_token_query(): pass sid_buf == NULL with
+ * cap == 0 to probe for the required size. */
 ssize_t peios_token_user(int fd, void *sid_buf, size_t cap);		/* CLASS_USER */
+
+/* Typed convenience over peios_token_query() for the common scalar classes.
+ * Output pointers are mandatory and must be non-NULL. */
 int	peios_token_type(int fd, uint32_t *out);			/* CLASS_TYPE */
 int	peios_token_session_id(int fd, uint32_t *out);			/* CLASS_SESSION_ID */
 int	peios_token_integrity(int fd, uint32_t *level_rid_out);		/* CLASS_INTEGRITY_LEVEL */
@@ -214,6 +220,13 @@ int peios_token_install(int fd);
 /* Impersonate this impersonation token on the calling thread. */
 int peios_token_impersonate(int fd);
 
+/* Revert the calling thread to its own identity, undoing any active
+ * impersonation — the inverse of peios_token_impersonate(). Takes no token: it
+ * clears the thread's impersonation token so access checks run as the thread's
+ * real (primary) token again. A no-op (reported as success) if not
+ * impersonating. Returns 0, or -1 with errno. */
+int peios_token_revert(void);
+
 /* Link an elevated + filtered primary-token pair in @session_id [adv]. */
 int peios_token_link(int elevated_fd, int filtered_fd, uint64_t session_id);
 
@@ -221,8 +234,8 @@ int peios_token_link(int elevated_fd, int filtered_fd, uint64_t session_id);
 int peios_token_get_linked(int fd);
 
 /* Replace the token's default DACL and/or owner / primary-group indices [adv].
- * dacl == NULL leaves the DACL unchanged; dacl != NULL with len == 0 clears it;
- * an index of 0xFFFF leaves that index unchanged. */
+ * dacl == NULL leaves the DACL unchanged and ignores len; dacl != NULL with
+ * len == 0 clears it; an index of 0xFFFF leaves that index unchanged. */
 int peios_token_adjust_default(int fd, const void *dacl, size_t len,
 			       uint16_t owner_index, uint16_t group_index);
 
@@ -240,7 +253,7 @@ struct peios_session_spec {
 	size_t		user_sid_len;
 };
 
-/* Create a logon session (SeTcbPrivilege); the id is returned via @id_out. */
+/* Create a logon session (SeTcbPrivilege); @id_out is mandatory and receives the id. */
 int peios_session_create(const struct peios_session_spec *spec, uint64_t *id_out);
 
 /* Destroy a session that has no live tokens (SeTcbPrivilege). */

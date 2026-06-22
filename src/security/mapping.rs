@@ -12,8 +12,10 @@ use peios_uapi::{
     KACS_ACCESS_GENERIC_READ, KACS_ACCESS_GENERIC_WRITE,
 };
 
-const GENERIC_BITS: u32 =
-    KACS_ACCESS_GENERIC_READ | KACS_ACCESS_GENERIC_WRITE | KACS_ACCESS_GENERIC_EXECUTE | KACS_ACCESS_GENERIC_ALL;
+const GENERIC_BITS: u32 = KACS_ACCESS_GENERIC_READ
+    | KACS_ACCESS_GENERIC_WRITE
+    | KACS_ACCESS_GENERIC_EXECUTE
+    | KACS_ACCESS_GENERIC_ALL;
 
 /// `peios_access_map_generic` — fold `mask`'s generic bits through `m`.
 ///
@@ -53,8 +55,14 @@ mod tests {
             all: 0x001F_01FF,
         };
         unsafe {
-            assert_eq!(peios_access_map_generic(KACS_ACCESS_GENERIC_READ, &m), 0x0012_0089);
-            assert_eq!(peios_access_map_generic(KACS_ACCESS_GENERIC_ALL, &m), 0x001F_01FF);
+            assert_eq!(
+                peios_access_map_generic(KACS_ACCESS_GENERIC_READ, &m),
+                0x0012_0089
+            );
+            assert_eq!(
+                peios_access_map_generic(KACS_ACCESS_GENERIC_ALL, &m),
+                0x001F_01FF
+            );
             // Non-generic bits pass through; the generic bit is cleared.
             let mixed = peios_access_map_generic(KACS_ACCESS_GENERIC_WRITE | 0x40, &m);
             assert_eq!(mixed, 0x0012_0116 | 0x40);

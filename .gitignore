@@ -4,9 +4,6 @@
 # pekit build output (out_dir).
 /out/
 
-# cdylib/staticlib crate: the lockfile is not committed (project convention).
-Cargo.lock
-
 # Project tooling
 .cairn/
 .pm/

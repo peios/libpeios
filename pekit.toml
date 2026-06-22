@@ -11,18 +11,11 @@
 # post-build debug split mirrors glibc's (debugedit -> objcopy -> strip,
 # build-id indexed), adapted for the single shared object.
 #
-# Build deps come from the surrounding shell, not declared here: a stable Rust
-# toolchain (cargo, rustc) plus binutils (objcopy, strip, readelf) and debugedit.
+# Build deps are declared below and checked by the build/test preflights: a Rust
+# toolchain (cargo, rustc), gcc for the final link, binutils (objcopy, strip,
+# readelf), debugedit, plus the ABI-verifier tools used by [test].
 
 out_dir = "out"
-
-# Toolchain: the rustup stable toolchain on the builder. Preserved from the prior
-# bare recipe — a farm shell can override PATH/CARGO/RUSTC to point elsewhere.
-[env]
-TC = "$HOME/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin"
-PATH = "$TC:$PATH"
-CARGO = "$TC/cargo"
-RUSTC = "$TC/rustc"
 
 # Single library build -> DESTDIR tree in $PEKIT_OUT. Layout follows the peipkg
 # payload spec (PSD-009 §3.4): usrmerged, arch-specific files under
@@ -37,8 +30,11 @@ RUSTC = "$TC/rustc"
 # are deliberately NOT shipped.
 [build.main]
 command = """
+set -eu
+set -o pipefail 2>/dev/null || true
+
 SRC="$(pwd)"
-for tool in cargo objcopy strip readelf debugedit; do
+for tool in cargo rustc gcc objcopy strip readelf debugedit; do
   command -v "$tool" >/dev/null || { echo "missing required libpeios build tool: $tool" >&2; exit 1; }
 done
 
@@ -51,7 +47,7 @@ LIBDIR="usr/lib/$TRIPLET"
 # split-debuginfo=off keeps the DWARF INSIDE the .so so objcopy/strip can split
 # it the same way glibc splits its ELF binaries.
 CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
-  cargo build --release
+  cargo build --release --locked
 
 # Stage the DESTDIR tree.
 mkdir -p "$PEKIT_OUT/$LIBDIR" "$PEKIT_OUT/usr/include/peios"
@@ -101,8 +97,44 @@ done
 rm -f "$PEKIT_OUT/.srclist"
 """
 
+# Build deps. A cargo crate: the Rust toolchain (cargo + rustc) compiles the
+# cdylib/staticlib, gcc drives the final link, and the debug split uses binutils
+# (objcopy/strip/readelf) + debugedit. The [test] verifier also compiles headers
+# as C++ and regenerates the ABI snapshot, so g++ and cbindgen are declared here
+# too (pekit currently exposes dependencies on build targets only). The verifier
+# script enforces the exact cbindgen version needed for reproducible snapshots.
+# No external C libraries (the only C-ABI surface is the system libc, supplied by
+# the target).
+[build.main.dependencies.peipkg]
+cargo = "*"
+rust = "*"
+gcc = "*"
+"gcc-c++" = "*"
+cbindgen = "0.29.2"
+binutils = "*"
+debugedit = "*"
+
+[build.main.dependencies.apt]
+cargo = "*"
+rustc = "*"
+gcc = "*"
+"g++" = "*"
+cbindgen = "*"
+binutils = "*"
+debugedit = "*"
+
 [test]
-command = "cargo test"
+command = """
+set -eu
+set -o pipefail 2>/dev/null || true
+
+for tool in cargo rustc gcc g++ cbindgen; do
+  command -v "$tool" >/dev/null || { echo "missing required libpeios test tool: $tool" >&2; exit 1; }
+done
+
+cargo test --locked
+./tools/verify-abi.sh
+"""
 
 [clean]
 command = "cargo clean"

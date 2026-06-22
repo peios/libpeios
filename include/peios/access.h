@@ -30,6 +30,8 @@ extern "C" {
 /*
  * An access-check request. Only the first block is needed for an ordinary
  * check; everything below the divider is advanced and may be left zero/NULL.
+ * For pointer/length pairs, NULL is valid only when the corresponding length
+ * or count is zero.
  */
 struct peios_access_request {
 	int		token_fd;	/* -1 = the caller's effective token */

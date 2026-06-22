@@ -53,4 +53,3 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     // SAFETY: `abort` never returns and performs no Rust unwinding.
     unsafe { abort() }
 }
-

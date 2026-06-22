@@ -165,12 +165,14 @@ pub unsafe extern "C" fn peios_sd_view_owner(
     sid: *mut *const c_void,
     len: *mut usize,
 ) -> c_int {
-    match SecurityDescriptor::parse(load(v as *const c_void)).ok().and_then(|sd| {
-        sd.owner().map(|o| {
-            let b = o.as_bytes();
-            (b.as_ptr(), b.len())
-        })
-    }) {
+    match SecurityDescriptor::parse(load(v as *const c_void))
+        .ok()
+        .and_then(|sd| {
+            sd.owner().map(|o| {
+                let b = o.as_bytes();
+                (b.as_ptr(), b.len())
+            })
+        }) {
         Some((ptr, n)) => {
             yield_slice(slice::from_raw_parts(ptr, n), sid, len);
             0
@@ -186,12 +188,14 @@ pub unsafe extern "C" fn peios_sd_view_group(
     sid: *mut *const c_void,
     len: *mut usize,
 ) -> c_int {
-    match SecurityDescriptor::parse(load(v as *const c_void)).ok().and_then(|sd| {
-        sd.group().map(|g| {
-            let b = g.as_bytes();
-            (b.as_ptr(), b.len())
-        })
-    }) {
+    match SecurityDescriptor::parse(load(v as *const c_void))
+        .ok()
+        .and_then(|sd| {
+            sd.group().map(|g| {
+                let b = g.as_bytes();
+                (b.as_ptr(), b.len())
+            })
+        }) {
         Some((ptr, n)) => {
             yield_slice(slice::from_raw_parts(ptr, n), sid, len);
             0
@@ -371,12 +375,9 @@ pub unsafe extern "C" fn peios_ace_view_object_type(
     guid16: *mut *const u8,
 ) -> c_int {
     object_guid(e, guid16, |kind| match kind {
-        AceKind::Object {
-            object_type, ..
+        AceKind::Object { object_type, .. } | AceKind::CallbackObject { object_type, .. } => {
+            object_type
         }
-        | AceKind::CallbackObject {
-            object_type, ..
-        } => object_type,
         _ => None,
     })
 }
@@ -584,7 +585,12 @@ mod tests {
     }
 
     /// Self-relative SD with components laid out after the 20-byte header.
-    fn sd(owner: Option<&[u8]>, group: Option<&[u8]>, dacl: Option<&[u8]>, control: u16) -> Vec<u8> {
+    fn sd(
+        owner: Option<&[u8]>,
+        group: Option<&[u8]>,
+        dacl: Option<&[u8]>,
+        control: u16,
+    ) -> Vec<u8> {
         let base = 20u32;
         let mut body = Vec::new();
         let mut place = |opt: Option<&[u8]>| -> u32 {
@@ -629,7 +635,10 @@ mod tests {
             let buf = sd(Some(&owner), Some(&group), Some(&dacl), 0x0004); // DACL_PRESENT
 
             let mut v = peios_sd_view { _opaque: [0; 8] };
-            assert_eq!(peios_sd_parse(buf.as_ptr() as *const c_void, buf.len(), &mut v), 0);
+            assert_eq!(
+                peios_sd_parse(buf.as_ptr() as *const c_void, buf.len(), &mut v),
+                0
+            );
             assert_eq!(peios_sd_view_control(&v) & 0x8000, 0x8000);
 
             let (mut p, mut l) = (ptr::null::<c_void>(), 0usize);
@@ -671,7 +680,10 @@ mod tests {
             let owner = sid(5, &[18]);
             let buf = sd(Some(&owner), None, None, 0);
             let mut v = peios_sd_view { _opaque: [0; 8] };
-            assert_eq!(peios_sd_parse(buf.as_ptr() as *const c_void, buf.len(), &mut v), 0);
+            assert_eq!(
+                peios_sd_parse(buf.as_ptr() as *const c_void, buf.len(), &mut v),
+                0
+            );
 
             let (mut p, mut l) = (ptr::null::<c_void>(), 0usize);
             assert_eq!(peios_sd_view_owner(&v, &mut p, &mut l), 0);
@@ -687,15 +699,25 @@ mod tests {
             let trustee = sid(5, &[11]);
             let bytes = acl(&[allow_ace(&trustee, 0x120089)]);
             let mut av = peios_acl_view { _opaque: [0; 4] };
-            assert_eq!(peios_acl_parse(bytes.as_ptr() as *const c_void, bytes.len(), &mut av), 0);
+            assert_eq!(
+                peios_acl_parse(bytes.as_ptr() as *const c_void, bytes.len(), &mut av),
+                0
+            );
             assert_eq!(peios_acl_view_count(&av), 1);
 
             // Truncated ACL header.
-            assert_eq!(peios_acl_parse(bytes.as_ptr() as *const c_void, 4, &mut av), -1);
+            assert_eq!(
+                peios_acl_parse(bytes.as_ptr() as *const c_void, 4, &mut av),
+                -1
+            );
             assert_eq!(errno(), libc::EINVAL);
             // NULL out.
             assert_eq!(
-                peios_acl_parse(bytes.as_ptr() as *const c_void, bytes.len(), ptr::null_mut()),
+                peios_acl_parse(
+                    bytes.as_ptr() as *const c_void,
+                    bytes.len(),
+                    ptr::null_mut()
+                ),
                 -1
             );
         }
@@ -715,7 +737,10 @@ mod tests {
             };
             let dacl = acl(&[bad_ace]);
             let buf = sd(None, None, Some(&dacl), 0x0004);
-            assert_eq!(peios_sd_parse(buf.as_ptr() as *const c_void, buf.len(), &mut v), -1);
+            assert_eq!(
+                peios_sd_parse(buf.as_ptr() as *const c_void, buf.len(), &mut v),
+                -1
+            );
             assert_eq!(errno(), libc::EINVAL);
         }
     }
@@ -740,7 +765,10 @@ mod tests {
             let blob = sid_array(&[(&s1, 0x7), (&s2, 0xC000_0000)]);
 
             let mut v = peios_sid_array_view { _opaque: [0; 4] };
-            assert_eq!(peios_sid_array_parse(blob.as_ptr() as *const c_void, blob.len(), &mut v), 0);
+            assert_eq!(
+                peios_sid_array_parse(blob.as_ptr() as *const c_void, blob.len(), &mut v),
+                0
+            );
             assert_eq!(peios_sid_array_count(&v), 2);
 
             let (mut p, mut l, mut at) = (ptr::null::<c_void>(), 0usize, 0u32);
@@ -762,7 +790,10 @@ mod tests {
             let mut v = peios_sid_array_view { _opaque: [0; 4] };
             // A well-formed zero-entry array.
             let empty = sid_array(&[]);
-            assert_eq!(peios_sid_array_parse(empty.as_ptr() as *const c_void, empty.len(), &mut v), 0);
+            assert_eq!(
+                peios_sid_array_parse(empty.as_ptr() as *const c_void, empty.len(), &mut v),
+                0
+            );
             assert_eq!(peios_sid_array_count(&v), 0);
             // count=1 but the SID runs off the end.
             let bad = {
@@ -770,12 +801,18 @@ mod tests {
                 b.extend_from_slice(&12u32.to_le_bytes()); // sid_len 12, no sid follows
                 b
             };
-            assert_eq!(peios_sid_array_parse(bad.as_ptr() as *const c_void, bad.len(), &mut v), -1);
+            assert_eq!(
+                peios_sid_array_parse(bad.as_ptr() as *const c_void, bad.len(), &mut v),
+                -1
+            );
             assert_eq!(errno(), libc::EINVAL);
             // Trailing slop after the declared entries.
             let mut slop = sid_array(&[(&sid(5, &[11]), 0)]);
             slop.push(0xAB);
-            assert_eq!(peios_sid_array_parse(slop.as_ptr() as *const c_void, slop.len(), &mut v), -1);
+            assert_eq!(
+                peios_sid_array_parse(slop.as_ptr() as *const c_void, slop.len(), &mut v),
+                -1
+            );
         }
     }
 }

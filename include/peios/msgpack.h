@@ -61,8 +61,9 @@ void peios_mp_write_raw(peios_mp_writer *w, const void *b, size_t len);
 /*
  * Borrow the encoded buffer (valid until the next mutating call on @w) via @out
  * and return its length, after confirming it is exactly one well-formed
- * top-level value. Returns -1 with errno (EINVAL on a latched error or malformed
- * structure, ENOMEM on a prior allocation failure).
+ * top-level value. @out may be NULL to validate and return the length without
+ * borrowing the pointer. Returns -1 with errno (EINVAL on a latched error or
+ * malformed structure, ENOMEM on a prior allocation failure).
  */
 ssize_t peios_mp_writer_bytes(peios_mp_writer *w, const void **out);
 
@@ -89,6 +90,7 @@ enum peios_mp_type {
 
 /* A decode cursor over a borrowed buffer; stack-allocatable. Opaque storage —
  * initialize with peios_mp_reader_init() before use, and do not inspect fields.
+ * buf may be NULL only when len is zero; otherwise later reads fail with EINVAL.
  * Borrowed str/bin/ext pointers point into the original buffer and are valid for
  * as long as it is. */
 struct peios_mp_reader {
@@ -103,7 +105,9 @@ size_t peios_mp_reader_remaining(const struct peios_mp_reader *r);
 int peios_mp_peek(const struct peios_mp_reader *r);
 
 /* Each read consumes one value on success (0 / a length) and leaves the cursor
- * untouched on a type mismatch or truncation (-1 with errno == EINVAL). */
+ * untouched on a type mismatch or truncation (-1 with errno == EINVAL). Output
+ * pointers are optional: pass NULL to consume/check a value without receiving
+ * the decoded payload. */
 int peios_mp_read_nil(struct peios_mp_reader *r);
 int peios_mp_read_bool(struct peios_mp_reader *r, bool *out);
 int peios_mp_read_int(struct peios_mp_reader *r, int64_t *out);
@@ -111,7 +115,8 @@ int peios_mp_read_uint(struct peios_mp_reader *r, uint64_t *out);
 int peios_mp_read_float(struct peios_mp_reader *r, double *out);
 
 /* Borrow str/bin bytes (a pointer into the reader's buffer) and return the
- * length, or -1. Strings are not NUL-terminated — use the length. */
+ * length, or -1. peios_mp_read_str rejects invalid UTF-8. Strings are not
+ * NUL-terminated — use the length. */
 ssize_t peios_mp_read_str(struct peios_mp_reader *r, const char **out);
 ssize_t peios_mp_read_bin(struct peios_mp_reader *r, const void **out);
 
@@ -122,7 +127,8 @@ ssize_t peios_mp_read_array(struct peios_mp_reader *r);
 ssize_t peios_mp_read_map(struct peios_mp_reader *r);
 
 /* Borrow an extension value's bytes, reporting its signed type id via @type_out;
- * returns the data length, or -1. */
+ * returns the data length, or -1. @type_out and @out are independently
+ * optional. */
 ssize_t peios_mp_read_ext(struct peios_mp_reader *r, int8_t *type_out, const void **out);
 
 /* Skip exactly one complete value (descending into nested containers). 0 on

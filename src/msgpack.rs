@@ -349,7 +349,11 @@ impl<'a> Cursor<'a> {
     fn read_str(&mut self) -> Result<&'a [u8], ()> {
         let save = self.pos;
         match self.try_read_str() {
-            Some(s) => Ok(s),
+            Some(s) if core::str::from_utf8(s).is_ok() => Ok(s),
+            Some(_) => {
+                self.pos = save;
+                Err(())
+            }
             None => {
                 self.pos = save;
                 Err(())
@@ -886,7 +890,7 @@ pub unsafe extern "C" fn peios_mp_writer_error(w: *const peios_mp_writer) -> c_i
 // ----------------------------------------------------------------------------
 
 /// `peios_mp_reader` — a stack-allocatable decode cursor over a borrowed buffer.
-/// Opaque storage holds `(ptr, len, pos)`.
+/// Opaque storage holds `(ptr, len, pos, error)`.
 #[repr(C)]
 pub struct peios_mp_reader {
     _opaque: [u64; 4],
@@ -895,6 +899,9 @@ pub struct peios_mp_reader {
 const _: () = assert!(core::mem::size_of::<peios_mp_reader>() == 32);
 
 impl peios_mp_reader {
+    fn error(&self) -> c_int {
+        self._opaque[3] as c_int
+    }
     unsafe fn cursor(&self) -> Cursor<'static> {
         let ptr = self._opaque[0] as usize as *const u8;
         let len = self._opaque[1] as usize;
@@ -913,7 +920,8 @@ impl peios_mp_reader {
     }
 }
 
-/// `peios_mp_reader_init` — point a reader at `buf`/`len`.
+/// `peios_mp_reader_init` — point a reader at `buf`/`len`. `buf == NULL` with a
+/// nonzero `len` latches `EINVAL` for later reader operations.
 #[no_mangle]
 pub unsafe extern "C" fn peios_mp_reader_init(
     r: *mut peios_mp_reader,
@@ -921,7 +929,12 @@ pub unsafe extern "C" fn peios_mp_reader_init(
     len: usize,
 ) {
     if let Some(r) = r.as_mut() {
-        r._opaque = [buf as usize as u64, len as u64, 0, 0];
+        let error = if buf.is_null() && len != 0 {
+            libc::EINVAL as u64
+        } else {
+            0
+        };
+        r._opaque = [buf as usize as u64, len as u64, 0, error];
     }
 }
 
@@ -930,6 +943,9 @@ pub unsafe extern "C" fn peios_mp_reader_init(
 pub unsafe extern "C" fn peios_mp_reader_remaining(r: *const peios_mp_reader) -> usize {
     match r.as_ref() {
         Some(r) => {
+            if r.error() != 0 {
+                return 0;
+            }
             let cur = r.cursor();
             cur.buf.len().saturating_sub(cur.pos)
         }
@@ -942,10 +958,11 @@ pub unsafe extern "C" fn peios_mp_reader_remaining(r: *const peios_mp_reader) ->
 #[no_mangle]
 pub unsafe extern "C" fn peios_mp_peek(r: *const peios_mp_reader) -> c_int {
     let Some(r) = r.as_ref() else { return -1 };
-    match r.cursor().peek_byte().and_then(classify) {
-        Some(t) => t,
-        None => -1,
+    if r.error() != 0 {
+        set_errno(r.error());
+        return -1;
     }
+    r.cursor().peek_byte().and_then(classify).unwrap_or(-1)
 }
 
 /// Run a cursor read, committing the new position on success or setting `errno`
@@ -958,6 +975,10 @@ unsafe fn reader_read<T>(
         set_errno(libc::EINVAL);
         return Err(());
     };
+    if r.error() != 0 {
+        set_errno(r.error());
+        return Err(());
+    }
     let mut cur = r.cursor();
     match f(&mut cur) {
         Ok(v) => {
@@ -1193,7 +1214,10 @@ mod tests {
         // uint
         let b = enc(|w| unsafe { peios_mp_write_uint(w, 300) });
         assert_eq!(b, vec![0xcd, 0x01, 0x2c]); // uint16 big-endian
-        assert_eq!(unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) }, 0);
+        assert_eq!(
+            unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) },
+            0
+        );
         unsafe {
             let mut r = peios_mp_reader { _opaque: [0; 4] };
             peios_mp_reader_init(&mut r, b.as_ptr() as *const c_void, b.len());
@@ -1206,7 +1230,10 @@ mod tests {
 
         // negative int → smallest form
         assert_eq!(enc(|w| unsafe { peios_mp_write_int(w, -1) }), vec![0xff]);
-        assert_eq!(enc(|w| unsafe { peios_mp_write_int(w, -33) }), vec![0xd0, 0xdf]);
+        assert_eq!(
+            enc(|w| unsafe { peios_mp_write_int(w, -33) }),
+            vec![0xd0, 0xdf]
+        );
         // positive fixint
         assert_eq!(enc(|w| unsafe { peios_mp_write_int(w, 7) }), vec![0x07]);
 
@@ -1245,7 +1272,8 @@ mod tests {
         }
 
         let blob = [0u8, 1, 2, 0xff];
-        let b = enc(|w| unsafe { peios_mp_write_bin(w, blob.as_ptr() as *const c_void, blob.len()) });
+        let b =
+            enc(|w| unsafe { peios_mp_write_bin(w, blob.as_ptr() as *const c_void, blob.len()) });
         assert_eq!(b[0], 0xc4); // bin8
         unsafe {
             let mut r = peios_mp_reader { _opaque: [0; 4] };
@@ -1259,6 +1287,20 @@ mod tests {
     }
 
     #[test]
+    fn read_str_rejects_invalid_utf8_without_consuming() {
+        let b = [0xa1u8, 0xff];
+        unsafe {
+            let mut r = peios_mp_reader { _opaque: [0; 4] };
+            peios_mp_reader_init(&mut r, b.as_ptr() as *const c_void, b.len());
+            let mut out = core::ptr::null::<c_char>();
+
+            assert_eq!(peios_mp_read_str(&mut r, &mut out), -1);
+            assert!(out.is_null());
+            assert_eq!(peios_mp_reader_remaining(&r), b.len());
+        }
+    }
+
+    #[test]
     fn map_roundtrip_and_decode() {
         // {"id": 42, "ok": true}
         let b = enc(|w| unsafe {
@@ -1268,7 +1310,10 @@ mod tests {
             peios_mp_write_str(w, b"ok".as_ptr() as *const c_char, 2);
             peios_mp_write_bool(w, true);
         });
-        assert_eq!(unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) }, 0);
+        assert_eq!(
+            unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) },
+            0
+        );
         unsafe {
             let mut r = peios_mp_reader { _opaque: [0; 4] };
             peios_mp_reader_init(&mut r, b.as_ptr() as *const c_void, b.len());
@@ -1300,7 +1345,10 @@ mod tests {
             peios_mp_write_uint(w, 3);
             peios_mp_write_str(w, b"x".as_ptr() as *const c_char, 1);
         });
-        assert_eq!(unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) }, 0);
+        assert_eq!(
+            unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) },
+            0
+        );
         unsafe {
             let mut r = peios_mp_reader { _opaque: [0; 4] };
             peios_mp_reader_init(&mut r, b.as_ptr() as *const c_void, b.len());
@@ -1319,7 +1367,9 @@ mod tests {
     #[test]
     fn ext_roundtrip() {
         let data = [9u8, 8, 7];
-        let b = enc(|w| unsafe { peios_mp_write_ext(w, -1, data.as_ptr() as *const c_void, data.len()) });
+        let b = enc(|w| unsafe {
+            peios_mp_write_ext(w, -1, data.as_ptr() as *const c_void, data.len())
+        });
         assert_eq!(b[0], 0xc7); // ext8 (len 3 is not a fixext size)
         unsafe {
             let mut r = peios_mp_reader { _opaque: [0; 4] };
@@ -1333,7 +1383,10 @@ mod tests {
             assert_eq!(slice::from_raw_parts(out as *const u8, 3), &data);
         }
         // fixext sizes pick the fixext lead bytes.
-        assert_eq!(enc(|w| unsafe { peios_mp_write_ext(w, 5, [1u8].as_ptr() as *const c_void, 1) })[0], 0xd4);
+        assert_eq!(
+            enc(|w| unsafe { peios_mp_write_ext(w, 5, [1u8].as_ptr() as *const c_void, 1) })[0],
+            0xd4
+        );
     }
 
     #[test]
@@ -1343,19 +1396,34 @@ mod tests {
             assert_eq!(peios_mp_validate(core::ptr::null(), 0, DEFAULT_DEPTH), -1);
             // reserved 0xc1
             let bad = [0xc1u8];
-            assert_eq!(peios_mp_validate(bad.as_ptr() as *const c_void, 1, DEFAULT_DEPTH), -1);
+            assert_eq!(
+                peios_mp_validate(bad.as_ptr() as *const c_void, 1, DEFAULT_DEPTH),
+                -1
+            );
             // trailing garbage after a complete value
             let trailing = [0x01u8, 0x02];
-            assert_eq!(peios_mp_validate(trailing.as_ptr() as *const c_void, 2, DEFAULT_DEPTH), -1);
+            assert_eq!(
+                peios_mp_validate(trailing.as_ptr() as *const c_void, 2, DEFAULT_DEPTH),
+                -1
+            );
             // truncated str (fixstr len 5, only 1 byte follows)
             let trunc = [0xa5u8, b'h'];
-            assert_eq!(peios_mp_validate(trunc.as_ptr() as *const c_void, 2, DEFAULT_DEPTH), -1);
+            assert_eq!(
+                peios_mp_validate(trunc.as_ptr() as *const c_void, 2, DEFAULT_DEPTH),
+                -1
+            );
             // invalid UTF-8 in a str
             let bad_utf8 = [0xa1u8, 0xff];
-            assert_eq!(peios_mp_validate(bad_utf8.as_ptr() as *const c_void, 2, DEFAULT_DEPTH), -1);
+            assert_eq!(
+                peios_mp_validate(bad_utf8.as_ptr() as *const c_void, 2, DEFAULT_DEPTH),
+                -1
+            );
             // a bin with the same bytes is fine (no UTF-8 requirement)
             let ok_bin = [0xc4u8, 0x01, 0xff];
-            assert_eq!(peios_mp_validate(ok_bin.as_ptr() as *const c_void, 3, DEFAULT_DEPTH), 0);
+            assert_eq!(
+                peios_mp_validate(ok_bin.as_ptr() as *const c_void, 3, DEFAULT_DEPTH),
+                0
+            );
         }
     }
 
@@ -1371,8 +1439,14 @@ mod tests {
             peios_mp_write_uint(w, 1);
         });
         unsafe {
-            assert_eq!(peios_mp_validate(b.as_ptr() as *const c_void, b.len(), 4), 0);
-            assert_eq!(peios_mp_validate(b.as_ptr() as *const c_void, b.len(), 3), -1);
+            assert_eq!(
+                peios_mp_validate(b.as_ptr() as *const c_void, b.len(), 4),
+                0
+            );
+            assert_eq!(
+                peios_mp_validate(b.as_ptr() as *const c_void, b.len(), 3),
+                -1
+            );
         }
     }
 
@@ -1417,7 +1491,10 @@ mod tests {
         let raw = [0x81u8, 0xa1, b'a', 0x01];
         let b = enc(|w| unsafe { peios_mp_write_raw(w, raw.as_ptr() as *const c_void, raw.len()) });
         assert_eq!(b, raw);
-        assert_eq!(unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) }, 0);
+        assert_eq!(
+            unsafe { peios_mp_validate(b.as_ptr() as *const c_void, b.len(), DEFAULT_DEPTH) },
+            0
+        );
     }
 
     // ---- Decoder hardening: hostile / truncated / oversized inputs ----
@@ -1432,6 +1509,23 @@ mod tests {
         let mut r = peios_mp_reader { _opaque: [0; 4] };
         peios_mp_reader_init(&mut r, buf.as_ptr() as *const c_void, buf.len());
         r
+    }
+
+    #[test]
+    fn reader_rejects_null_buffer_with_nonzero_length() {
+        unsafe {
+            let mut r = peios_mp_reader { _opaque: [0; 4] };
+            peios_mp_reader_init(&mut r, core::ptr::null(), 1);
+
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_mp_peek(&r), -1);
+            assert_eq!(*libc::__errno_location(), libc::EINVAL);
+            assert_eq!(peios_mp_reader_remaining(&r), 0);
+
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_mp_read_nil(&mut r), -1);
+            assert_eq!(*libc::__errno_location(), libc::EINVAL);
+        }
     }
 
     #[test]

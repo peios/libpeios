@@ -15,7 +15,9 @@
 
 use core::ffi::c_int;
 
-use peios_uapi::{reg_txn_status_args, REG_IOC_COMMIT, REG_IOC_TXN_STATUS, SYS_REG_BEGIN_TRANSACTION};
+use peios_uapi::{
+    reg_txn_status_args, REG_IOC_COMMIT, REG_IOC_TXN_STATUS, SYS_REG_BEGIN_TRANSACTION,
+};
 
 use crate::sys::{ioctl, ret_int, syscall0};
 
@@ -47,7 +49,11 @@ pub extern "C" fn peios_reg_begin_transaction() -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_commit(txn_fd: c_int) -> c_int {
     // REG_IOC_COMMIT is an argument-less `_IO` code.
-    ioctl(txn_fd, REG_IOC_COMMIT as core::ffi::c_ulong, core::ptr::null_mut())
+    ioctl(
+        txn_fd,
+        REG_IOC_COMMIT as core::ffi::c_ulong,
+        core::ptr::null_mut(),
+    )
 }
 
 /// `peios_reg_txn_status` — read the state of a transaction fd.

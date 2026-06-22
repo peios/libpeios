@@ -18,11 +18,11 @@ use alloc::vec::Vec;
 
 use kacs_core::{
     minimum_acl_revision_for_ace_type, Ace, Acl, ACCESS_ALLOWED_ACE_TYPE,
-    ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE, ACCESS_ALLOWED_OBJECT_ACE_TYPE, ACCESS_DENIED_ACE_TYPE,
-    ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE, ACCESS_DENIED_OBJECT_ACE_TYPE,
+    ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE, ACCESS_ALLOWED_OBJECT_ACE_TYPE,
+    ACCESS_DENIED_ACE_TYPE, ACCESS_DENIED_CALLBACK_OBJECT_ACE_TYPE, ACCESS_DENIED_OBJECT_ACE_TYPE,
     ACE_INHERITED_OBJECT_TYPE_PRESENT, ACE_OBJECT_TYPE_PRESENT, ACL_REVISION,
-    SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE, SYSTEM_ALARM_OBJECT_ACE_TYPE,
-    SYSTEM_AUDIT_ACE_TYPE, SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE, SYSTEM_AUDIT_OBJECT_ACE_TYPE,
+    SYSTEM_ALARM_CALLBACK_OBJECT_ACE_TYPE, SYSTEM_ALARM_OBJECT_ACE_TYPE, SYSTEM_AUDIT_ACE_TYPE,
+    SYSTEM_AUDIT_CALLBACK_OBJECT_ACE_TYPE, SYSTEM_AUDIT_OBJECT_ACE_TYPE,
     SYSTEM_MANDATORY_LABEL_ACE_TYPE,
 };
 
@@ -115,9 +115,15 @@ impl peios_acl_builder {
         if self.error != 0 {
             return;
         }
-        if let Err(errno) =
-            self.encode(ace_type, flags, mask, sid, object_type, inherited_object_type, app_data)
-        {
+        if let Err(errno) = self.encode(
+            ace_type,
+            flags,
+            mask,
+            sid,
+            object_type,
+            inherited_object_type,
+            app_data,
+        ) {
             self.latch(errno);
         }
     }
@@ -162,7 +168,7 @@ impl peios_acl_builder {
 
         // Patch in the encoded size; ACE sizes are u16 and 4-aligned.
         let size = ace.len();
-        if size > u16::MAX as usize || size % 4 != 0 {
+        if size > u16::MAX as usize || !size.is_multiple_of(4) {
             return Err(libc::EINVAL);
         }
         ace[2..4].copy_from_slice(&(size as u16).to_le_bytes());
@@ -180,7 +186,9 @@ impl peios_acl_builder {
 
         try_extend(&mut self.aces, &ace).map_err(oom)?;
         self.count += 1;
-        self.revision = self.revision.max(minimum_acl_revision_for_ace_type(ace_type));
+        self.revision = self
+            .revision
+            .max(minimum_acl_revision_for_ace_type(ace_type));
         Ok(())
     }
 
@@ -319,7 +327,15 @@ pub unsafe extern "C" fn peios_acl_builder_label(
         return;
     }
     let sid = integrity_sid(integrity_rid);
-    b.add(SYSTEM_MANDATORY_LABEL_ACE_TYPE, 0, policy_mask, &sid, None, None, &[]);
+    b.add(
+        SYSTEM_MANDATORY_LABEL_ACE_TYPE,
+        0,
+        policy_mask,
+        &sid,
+        None,
+        None,
+        &[],
+    );
 }
 
 /// `peios_acl_builder_add` — append an arbitrary ACE from a spec.
@@ -340,7 +356,11 @@ pub unsafe extern "C" fn peios_acl_builder_add(
         b.latch(libc::EINVAL);
         return;
     };
-    let app_data = if spec.app_data.is_null() || spec.app_data_len == 0 {
+    if spec.app_data.is_null() && spec.app_data_len != 0 {
+        b.latch(libc::EINVAL);
+        return;
+    }
+    let app_data = if spec.app_data_len == 0 {
         &[][..]
     } else {
         slice::from_raw_parts(spec.app_data as *const u8, spec.app_data_len)
@@ -422,8 +442,8 @@ pub unsafe extern "C" fn peios_acl_builder_error(b: *const peios_acl_builder) ->
 mod tests {
     use super::*;
     use crate::security::view::{
-        peios_acl_parse, peios_acl_view, peios_acl_view_ace, peios_acl_view_count, peios_ace_view,
-        peios_ace_view_mask, peios_ace_view_sid, peios_ace_view_type,
+        peios_ace_view, peios_ace_view_mask, peios_ace_view_sid, peios_ace_view_type,
+        peios_acl_parse, peios_acl_view, peios_acl_view_ace, peios_acl_view_count,
     };
     use core::ptr;
 
@@ -445,13 +465,19 @@ mod tests {
         let need = peios_acl_builder_finish(b, ptr::null_mut(), 0);
         assert!(need > 0, "finish probe failed, errno={}", errno());
         let mut v = vec![0u8; need as usize];
-        assert_eq!(peios_acl_builder_finish(b, v.as_mut_ptr() as *mut c_void, v.len()), need);
+        assert_eq!(
+            peios_acl_builder_finish(b, v.as_mut_ptr() as *mut c_void, v.len()),
+            need
+        );
         v
     }
 
     unsafe fn parse_view(acl: &[u8]) -> peios_acl_view {
         let mut av = peios_acl_view { _opaque: [0; 4] };
-        assert_eq!(peios_acl_parse(acl.as_ptr() as *const c_void, acl.len(), &mut av), 0);
+        assert_eq!(
+            peios_acl_parse(acl.as_ptr() as *const c_void, acl.len(), &mut av),
+            0
+        );
         av
     }
 
@@ -464,7 +490,13 @@ mod tests {
             let users = sid(5, &[11]);
             // Deny first (canonical order), then allow.
             peios_acl_builder_deny(b, users.as_ptr() as *const c_void, users.len(), 0x10000, 0);
-            peios_acl_builder_allow(b, admins.as_ptr() as *const c_void, admins.len(), 0x1F01FF, 0);
+            peios_acl_builder_allow(
+                b,
+                admins.as_ptr() as *const c_void,
+                admins.len(),
+                0x1F01FF,
+                0,
+            );
             assert_eq!(peios_acl_builder_error(b), 0);
 
             let acl = finish(b);
@@ -514,6 +546,30 @@ mod tests {
     }
 
     #[test]
+    fn add_rejects_null_app_data_with_length() {
+        unsafe {
+            let b = peios_acl_builder_new();
+            let admins = sid(5, &[32, 544]);
+            let spec = peios_ace_spec {
+                type_: ACCESS_ALLOWED_ACE_TYPE,
+                flags: 0,
+                mask: 0x1,
+                sid: admins.as_ptr() as *const c_void,
+                sid_len: admins.len(),
+                object_type: ptr::null(),
+                inherited_object_type: ptr::null(),
+                app_data: ptr::null(),
+                app_data_len: 1,
+            };
+
+            peios_acl_builder_add(b, &spec);
+            assert_eq!(peios_acl_builder_error(b), libc::EINVAL);
+
+            peios_acl_builder_free(b);
+        }
+    }
+
+    #[test]
     fn label_ace() {
         unsafe {
             let b = peios_acl_builder_new();
@@ -526,7 +582,10 @@ mod tests {
             assert_eq!(peios_ace_view_mask(&ev), 0x1);
             let (mut p, mut l) = (ptr::null::<c_void>(), 0usize);
             assert_eq!(peios_ace_view_sid(&ev, &mut p, &mut l), 0);
-            assert_eq!(slice::from_raw_parts(p as *const u8, l), &integrity_sid(8192)[..]);
+            assert_eq!(
+                slice::from_raw_parts(p as *const u8, l),
+                &integrity_sid(8192)[..]
+            );
             peios_acl_builder_free(b);
         }
     }
@@ -576,7 +635,13 @@ mod tests {
             let b = peios_acl_builder_new();
             let admins = sid(5, &[32, 544]);
             // 0x0CE00000 are reserved; validate_ace_mask rejects them.
-            peios_acl_builder_allow(b, admins.as_ptr() as *const c_void, admins.len(), 0x0400_0000, 0);
+            peios_acl_builder_allow(
+                b,
+                admins.as_ptr() as *const c_void,
+                admins.len(),
+                0x0400_0000,
+                0,
+            );
             assert_eq!(peios_acl_builder_error(b), libc::EINVAL);
             peios_acl_builder_free(b);
         }

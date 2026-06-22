@@ -225,8 +225,6 @@ extern const struct kacs_generic_mapping peios_file_generic_mapping;
 
 extern const struct kacs_generic_mapping peios_token_generic_mapping;
 
-extern void abort(void);
-
 int peios_access_check(const struct peios_access_request *req,
                        uint32_t *granted,
                        struct peios_access_audit *audit);
@@ -703,6 +701,8 @@ int peios_token_reset_groups(int fd);
 int peios_token_reset_privileges(int fd);
 
 int peios_token_restrict(int fd, const struct peios_token_restrict *spec);
+
+int peios_token_revert(void);
 
 int peios_token_session_id(int fd, uint32_t *out);
 

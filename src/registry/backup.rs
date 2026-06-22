@@ -32,8 +32,7 @@ const _: () = assert!(core::mem::size_of::<reg_restore_args>() == 4);
 /// `key_fd` must be a registry key fd; `output_fd` an fd open for writing.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_backup(key_fd: c_int, output_fd: c_int) -> c_int {
-    let mut a = reg_backup_args::default();
-    a.output_fd = output_fd;
+    let mut a = reg_backup_args { output_fd };
     ioctl_struct(key_fd, REG_IOC_BACKUP, &mut a)
 }
 
@@ -50,8 +49,7 @@ pub unsafe extern "C" fn peios_reg_backup(key_fd: c_int, output_fd: c_int) -> c_
 /// `key_fd` must be a registry key fd; `input_fd` an fd open for reading.
 #[no_mangle]
 pub unsafe extern "C" fn peios_reg_restore(key_fd: c_int, input_fd: c_int) -> c_int {
-    let mut a = reg_restore_args::default();
-    a.input_fd = input_fd;
+    let mut a = reg_restore_args { input_fd };
     ioctl_struct(key_fd, REG_IOC_RESTORE, &mut a)
 }
 

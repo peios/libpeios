@@ -75,7 +75,8 @@ int	peios_fd_set_sd(int fd, uint32_t secinfo, const void *sd, size_t len);
 /*
  * Mount policy for the superblock @fd lives on (SeTcbPrivilege). On get,
  * @out->template_sd points into @tmpl_buf when it is large enough (getxattr-
- * style on that buffer), or is NULL if there is no template.
+ * style on that buffer), or is NULL if there is no template. A NULL template
+ * buffer/pointer is valid only with a zero template capacity/length.
  */
 struct peios_mount_policy {
 	uint32_t	policy;		/* KACS_MOUNT_POLICY_* */

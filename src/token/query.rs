@@ -53,7 +53,12 @@ pub unsafe extern "C" fn peios_token_query(
         // returning the required size in buf_len.
         buf_ptr: buf as usize as u64,
     };
-    if ioctl(fd, KACS_IOC_QUERY as c_ulong, (&mut args as *mut kacs_query_args).cast()) < 0 {
+    if ioctl(
+        fd,
+        KACS_IOC_QUERY as c_ulong,
+        (&mut args as *mut kacs_query_args).cast(),
+    ) < 0
+    {
         return -1; // errno set (ERANGE when a non-empty buffer is too small)
     }
     args.buf_len as isize
@@ -62,8 +67,12 @@ pub unsafe extern "C" fn peios_token_query(
 /// Read a fixed-size class into a stack scalar.
 ///
 /// # Safety
-/// `out` may be null; otherwise it must be writable for `T`.
+/// `out` must be writable for `T`.
 unsafe fn query_into<T>(fd: c_int, class: u32, out: *mut T) -> c_int {
+    if out.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     let mut value = core::mem::MaybeUninit::<T>::uninit();
     let n = peios_token_query(
         fd,
@@ -79,9 +88,7 @@ unsafe fn query_into<T>(fd: c_int, class: u32, out: *mut T) -> c_int {
         set_errno(libc::EINVAL);
         return -1;
     }
-    if !out.is_null() {
-        *out = value.assume_init();
-    }
+    *out = value.assume_init();
     0
 }
 
@@ -112,9 +119,36 @@ pub unsafe extern "C" fn peios_token_integrity(fd: c_int, level_rid_out: *mut u3
 
 /// `peios_token_privileges` — the privilege words (`KACS_TOKEN_CLASS_PRIVILEGES`).
 #[no_mangle]
-pub unsafe extern "C" fn peios_token_privileges(
-    fd: c_int,
-    out: *mut peios_privilege_set,
-) -> c_int {
+pub unsafe extern "C" fn peios_token_privileges(fd: c_int, out: *mut peios_privilege_set) -> c_int {
     query_into(fd, KACS_TOKEN_CLASS_PRIVILEGES, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn errno() -> libc::c_int {
+        unsafe { *libc::__errno_location() }
+    }
+
+    #[test]
+    fn typed_queries_reject_null_output_before_ioctl() {
+        unsafe {
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_token_type(-1, core::ptr::null_mut()), -1);
+            assert_eq!(errno(), libc::EINVAL);
+
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_token_session_id(-1, core::ptr::null_mut()), -1);
+            assert_eq!(errno(), libc::EINVAL);
+
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_token_integrity(-1, core::ptr::null_mut()), -1);
+            assert_eq!(errno(), libc::EINVAL);
+
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_token_privileges(-1, core::ptr::null_mut()), -1);
+            assert_eq!(errno(), libc::EINVAL);
+        }
+    }
 }

@@ -5,7 +5,8 @@
 //! object-type-result-list variant. Both are advisory — they evaluate, they do
 //! not enforce. libpeios owns the versioned `kacs_access_check_args` (it stamps
 //! `caller_size` and zeroes the reserved fields); the caller fills a flat
-//! [`peios_access_request`].
+//! [`peios_access_request`]. Optional pointer/length pairs must be NULL/zero or
+//! valid for the stated length/count.
 //!
 //! These cross the kernel boundary (syscalls 1023 / 1024), so they are exercised
 //! live under Provium; `cargo test` covers only the pure arg-packing in
@@ -45,6 +46,27 @@ const ARGS_SIZE: u32 = core::mem::size_of::<kacs_access_check_args>() as u32;
 // The uapi struct is the wire format verbatim (`#[repr(C)]` with explicit pad
 // fields); pin its size so a uapi layout change is caught here, not in the field.
 const _: () = assert!(core::mem::size_of::<kacs_access_check_args>() == 136);
+
+fn ptr_len_valid<T>(ptr: *const T, len: usize) -> bool {
+    len == 0 || !ptr.is_null()
+}
+
+fn validate_request(req: &peios_access_request, require_object_tree: bool) -> Result<(), c_int> {
+    if req.sd.is_null() || req.sd_len == 0 {
+        return Err(libc::EINVAL);
+    }
+    if !ptr_len_valid(req.self_sid, req.self_sid_len)
+        || !ptr_len_valid(req.local_claims, req.local_claims_len)
+        || !ptr_len_valid(req.audit_context, req.audit_context_len)
+        || !ptr_len_valid(req.object_tree, req.object_tree_count as usize)
+    {
+        return Err(libc::EINVAL);
+    }
+    if require_object_tree && req.object_tree_count == 0 {
+        return Err(libc::EINVAL);
+    }
+    Ok(())
+}
 
 /// An access-check request. Mirrors `struct peios_access_request` in
 /// `<peios/access.h>` field-for-field (`#[repr(C)]`). Only the first block is
@@ -99,28 +121,29 @@ pub struct peios_access_audit {
 /// left zero for the entry point to wire up. Pointer/NULL validation lives in
 /// the callers; this only guards the length narrowing.
 fn build_args(req: &peios_access_request) -> Result<kacs_access_check_args, c_int> {
-    let mut a = kacs_access_check_args::default();
-    a.caller_size = ARGS_SIZE;
-    a.token_fd = req.token_fd;
-    a.sd_ptr = req.sd as usize as u64;
-    a.sd_len = u32_len(req.sd_len)?;
-    a.desired_access = req.desired;
-    a.mapping_read = req.mapping.read;
-    a.mapping_write = req.mapping.write;
-    a.mapping_execute = req.mapping.execute;
-    a.mapping_all = req.mapping.all;
-    a.self_sid_ptr = req.self_sid as usize as u64;
-    a.self_sid_len = u32_len(req.self_sid_len)?;
-    a.privilege_intent = req.privilege_intent;
-    a.object_tree_ptr = req.object_tree as usize as u64;
-    a.object_tree_count = req.object_tree_count;
-    a.local_claims_ptr = req.local_claims as usize as u64;
-    a.local_claims_len = u32_len(req.local_claims_len)?;
-    a.pip_type = req.pip_type;
-    a.pip_trust = req.pip_trust;
-    a.audit_context_ptr = req.audit_context as usize as u64;
-    a.audit_context_len = u32_len(req.audit_context_len)?;
-    Ok(a)
+    Ok(kacs_access_check_args {
+        caller_size: ARGS_SIZE,
+        token_fd: req.token_fd,
+        sd_ptr: req.sd as usize as u64,
+        sd_len: u32_len(req.sd_len)?,
+        desired_access: req.desired,
+        mapping_read: req.mapping.read,
+        mapping_write: req.mapping.write,
+        mapping_execute: req.mapping.execute,
+        mapping_all: req.mapping.all,
+        self_sid_ptr: req.self_sid as usize as u64,
+        self_sid_len: u32_len(req.self_sid_len)?,
+        privilege_intent: req.privilege_intent,
+        object_tree_ptr: req.object_tree as usize as u64,
+        object_tree_count: req.object_tree_count,
+        local_claims_ptr: req.local_claims as usize as u64,
+        local_claims_len: u32_len(req.local_claims_len)?,
+        pip_type: req.pip_type,
+        pip_trust: req.pip_trust,
+        audit_context_ptr: req.audit_context as usize as u64,
+        audit_context_len: u32_len(req.audit_context_len)?,
+        ..Default::default()
+    })
 }
 
 /// `peios_access_check` — run the scalar AccessCheck pipeline.
@@ -131,9 +154,9 @@ fn build_args(req: &peios_access_request) -> Result<kacs_access_check_args, c_in
 /// receives the audit outputs.
 ///
 /// # Safety
-/// `req` must point to a valid `peios_access_request` whose `sd`/`self_sid`/…
-/// pointers are each valid for their stated lengths. `granted`/`audit` must be
-/// NULL or valid for writing.
+/// `req` must point to a valid `peios_access_request` whose pointer/length pairs
+/// are each NULL/zero or valid for their stated lengths. `granted`/`audit` must
+/// be NULL or valid for writing.
 #[no_mangle]
 pub unsafe extern "C" fn peios_access_check(
     req: *const peios_access_request,
@@ -144,8 +167,8 @@ pub unsafe extern "C" fn peios_access_check(
         set_errno(libc::EINVAL);
         return -1;
     };
-    if req.sd.is_null() || req.sd_len == 0 {
-        set_errno(libc::EINVAL);
+    if let Err(errno) = validate_request(req, false) {
+        set_errno(errno);
         return -1;
     }
     let mut args = match build_args(req) {
@@ -176,11 +199,23 @@ pub unsafe extern "C" fn peios_access_check(
         // denial — the kernel wrote the outputs, so surface them; any other code
         // is a hard error with the outputs left untouched.
         if get_errno() == libc::EACCES {
-            copy_outputs(granted, audit, granted_out, continuous_audit, staging_mismatch);
+            copy_outputs(
+                granted,
+                audit,
+                granted_out,
+                continuous_audit,
+                staging_mismatch,
+            );
         }
         return -1;
     }
-    copy_outputs(granted, audit, granted_out, continuous_audit, staging_mismatch);
+    copy_outputs(
+        granted,
+        audit,
+        granted_out,
+        continuous_audit,
+        staging_mismatch,
+    );
     0
 }
 
@@ -213,8 +248,9 @@ unsafe fn copy_outputs(
 /// `errno` on error.
 ///
 /// # Safety
-/// `req` must point to a valid request; `results` must be valid for `count`
-/// `kacs_node_result` writes.
+/// `req` must point to a valid request whose pointer/length pairs are each
+/// NULL/zero or valid for their stated lengths; `results` must be valid for
+/// `count` `kacs_node_result` writes.
 #[no_mangle]
 pub unsafe extern "C" fn peios_access_check_list(
     req: *const peios_access_request,
@@ -225,12 +261,8 @@ pub unsafe extern "C" fn peios_access_check_list(
         set_errno(libc::EINVAL);
         return -1;
     };
-    if req.sd.is_null() || req.sd_len == 0 {
-        set_errno(libc::EINVAL);
-        return -1;
-    }
-    if req.object_tree.is_null() || req.object_tree_count == 0 {
-        set_errno(libc::EINVAL);
+    if let Err(errno) = validate_request(req, true) {
+        set_errno(errno);
         return -1;
     }
     if count != req.object_tree_count || results.is_null() {
@@ -255,6 +287,7 @@ pub unsafe extern "C" fn peios_access_check_list(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::get_errno;
 
     fn mapping() -> kacs_generic_mapping {
         kacs_generic_mapping {
@@ -345,5 +378,29 @@ mod tests {
         // A length that cannot fit the wire format's u32 is a clean EINVAL.
         req.sd_len = (u32::MAX as usize) + 1;
         assert!(matches!(build_args(&req), Err(e) if e == libc::EINVAL));
+    }
+
+    #[test]
+    fn access_check_rejects_null_optional_pointer_with_length() {
+        let sd = [0u8; 4];
+        let mut req = request(&sd, &[]);
+        req.self_sid = core::ptr::null();
+        req.self_sid_len = 1;
+
+        let r = unsafe { peios_access_check(&req, core::ptr::null_mut(), core::ptr::null_mut()) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
+    }
+
+    #[test]
+    fn access_check_rejects_null_object_tree_with_count() {
+        let sd = [0u8; 4];
+        let mut req = request(&sd, &[]);
+        req.object_tree = core::ptr::null();
+        req.object_tree_count = 1;
+
+        let r = unsafe { peios_access_check(&req, core::ptr::null_mut(), core::ptr::null_mut()) };
+        assert_eq!(r, -1);
+        assert_eq!(get_errno(), libc::EINVAL);
     }
 }

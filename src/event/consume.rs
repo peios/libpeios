@@ -18,8 +18,9 @@
 //!     accessors + per-position event parse + the futex wait, for callers who
 //!     drive their own loop.
 //!
-//! Only the pure event-header parsing ([`parse_event`]) is `cargo test`-able; the
-//! live drain (mmap + barriers + futex) is exercised under Provium.
+//! Pure event-header parsing and the in-memory ring/reader paths are covered by
+//! `cargo test`; the live syscall + mmap + futex integration is exercised under
+//! Provium.
 
 #![allow(non_camel_case_types)]
 
@@ -184,6 +185,22 @@ enum Wait {
 }
 
 impl Ring {
+    fn is_mapped(&self) -> bool {
+        let Ok(capacity) = usize::try_from(self.capacity) else {
+            return false;
+        };
+        let Some(data_len) = capacity.checked_mul(2) else {
+            return false;
+        };
+        let Some(mapped_data_len) = self.map_len.checked_sub(META_TOTAL) else {
+            return false;
+        };
+        !self.base.is_null()
+            && capacity != 0
+            && capacity.is_power_of_two()
+            && mapped_data_len >= data_len
+    }
+
     fn producer(&self) -> *const u8 {
         self.base
     }
@@ -212,7 +229,14 @@ impl Ring {
     fn set_need_wake(&self, on: bool) {
         let p = unsafe { self.consumer().add(KMES_CONSUMER_NEED_WAKE_OFFSET as usize) };
         let cell = unsafe { &*(p as *const AtomicU8) };
-        cell.store(u8::from(on), if on { Ordering::Release } else { Ordering::Relaxed });
+        cell.store(
+            u8::from(on),
+            if on {
+                Ordering::Release
+            } else {
+                Ordering::Relaxed
+            },
+        );
     }
 
     /// Parse the event at `read_pos` into `out` (pointers into the mapping);
@@ -265,7 +289,10 @@ impl Ring {
     }
 
     fn futex_ptr(&self) -> *const u32 {
-        unsafe { self.producer().add(KMES_PRODUCER_FUTEX_COUNTER_OFFSET as usize) as *const u32 }
+        unsafe {
+            self.producer()
+                .add(KMES_PRODUCER_FUTEX_COUNTER_OFFSET as usize) as *const u32
+        }
     }
 
     unsafe fn unmap(&self) {
@@ -302,7 +329,13 @@ unsafe fn futex_wait(addr: *const u32, expected: u32, timeout_ms: c_int) -> c_in
 /// mmap a ring fd and validate its magic/version/capacity. `Err(errno)` on
 /// failure (the mapping, if any, is released).
 unsafe fn map_ring(fd: c_int, capacity: u64) -> Result<Ring, c_int> {
-    let Some(map_len) = (capacity as usize)
+    let Ok(capacity_usize) = usize::try_from(capacity) else {
+        return Err(libc::EINVAL);
+    };
+    if capacity_usize == 0 || !capacity_usize.is_power_of_two() {
+        return Err(libc::EINVAL);
+    }
+    let Some(map_len) = capacity_usize
         .checked_mul(2)
         .and_then(|d| d.checked_add(META_TOTAL))
     else {
@@ -379,13 +412,19 @@ impl peios_event_ring {
             map_len: self._opaque[2] as usize,
         }
     }
+    fn load_mapped(&self) -> Option<Ring> {
+        let ring = self.load();
+        ring.is_mapped().then_some(ring)
+    }
     fn store(&mut self, r: Ring) {
         self._opaque = [r.base as usize as u64, r.capacity, r.map_len as u64, 0];
     }
 }
 
 /// `peios_event_ring_map` — mmap and validate a ring fd into `ring`. `capacity`
-/// is the value from `peios_event_attach`. Returns 0, or `-1` with errno.
+/// is the value from `peios_event_attach`. `ring` must be zeroed or previously
+/// unmapped; remapping without an intervening unmap returns `EBUSY` so the old
+/// mapping is not leaked. Returns 0, or `-1` with errno.
 ///
 /// # Safety
 /// `ring` must be valid for writing; `fd` a ring fd from `peios_event_attach`.
@@ -399,6 +438,10 @@ pub unsafe extern "C" fn peios_event_ring_map(
         set_errno(libc::EINVAL);
         return -1;
     };
+    if ring.load_mapped().is_some() {
+        set_errno(libc::EBUSY);
+        return -1;
+    }
     match map_ring(fd, capacity) {
         Ok(r) => {
             ring.store(r);
@@ -416,7 +459,9 @@ pub unsafe extern "C" fn peios_event_ring_map(
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_ring_unmap(ring: *mut peios_event_ring) {
     if let Some(ring) = ring.as_mut() {
-        ring.load().unmap();
+        if let Some(mapped) = ring.load_mapped() {
+            mapped.unmap();
+        }
         ring._opaque = [0; 4];
     }
 }
@@ -425,7 +470,7 @@ pub unsafe extern "C" fn peios_event_ring_unmap(ring: *mut peios_event_ring) {
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_ring_capacity(ring: *const peios_event_ring) -> u64 {
     match ring.as_ref() {
-        Some(r) => r.load().capacity,
+        Some(r) => r.load_mapped().map_or(0, |ring| ring.capacity),
         None => 0,
     }
 }
@@ -434,7 +479,7 @@ pub unsafe extern "C" fn peios_event_ring_capacity(ring: *const peios_event_ring
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_ring_write_pos(ring: *const peios_event_ring) -> u64 {
     match ring.as_ref() {
-        Some(r) => r.load().write_pos(),
+        Some(r) => r.load_mapped().map_or(0, |ring| ring.write_pos()),
         None => 0,
     }
 }
@@ -443,7 +488,7 @@ pub unsafe extern "C" fn peios_event_ring_write_pos(ring: *const peios_event_rin
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_ring_tail_pos(ring: *const peios_event_ring) -> u64 {
     match ring.as_ref() {
-        Some(r) => r.load().tail_pos(),
+        Some(r) => r.load_mapped().map_or(0, |ring| ring.tail_pos()),
         None => 0,
     }
 }
@@ -452,7 +497,7 @@ pub unsafe extern "C" fn peios_event_ring_tail_pos(ring: *const peios_event_ring
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_ring_generation(ring: *const peios_event_ring) -> u64 {
     match ring.as_ref() {
-        Some(r) => r.load().generation(),
+        Some(r) => r.load_mapped().map_or(0, |ring| ring.generation()),
         None => 0,
     }
 }
@@ -462,7 +507,9 @@ pub unsafe extern "C" fn peios_event_ring_generation(ring: *const peios_event_ri
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_ring_set_need_wake(ring: *const peios_event_ring, set: c_int) {
     if let Some(r) = ring.as_ref() {
-        r.load().set_need_wake(set != 0);
+        if let Some(ring) = r.load_mapped() {
+            ring.set_need_wake(set != 0);
+        }
     }
 }
 
@@ -483,7 +530,11 @@ pub unsafe extern "C" fn peios_event_ring_event_at(
         set_errno(libc::EINVAL);
         return -1;
     };
-    match ring.load().event_at(read_pos, out) {
+    let Some(ring) = ring.load_mapped() else {
+        set_errno(libc::EINVAL);
+        return -1;
+    };
+    match ring.event_at(read_pos, out) {
         Some(size) => size as isize,
         None => {
             set_errno(libc::EINVAL);
@@ -508,7 +559,11 @@ pub unsafe extern "C" fn peios_event_ring_wait(
         set_errno(libc::EINVAL);
         return -1;
     };
-    match ring.load().wait(read_pos, timeout_ms) {
+    let Some(ring) = ring.load_mapped() else {
+        set_errno(libc::EINVAL);
+        return -1;
+    };
+    match ring.wait(read_pos, timeout_ms) {
         Wait::Ready => 1,
         Wait::Idle => 0,
         Wait::Error => -1,
@@ -589,8 +644,13 @@ impl peios_event_reader {
             }
             let saved_tail = tail;
             let Some(size) = self.ring.event_at(self.read_pos, out) else {
-                // Corrupt slot: resynchronise to the tail and retry.
-                self.read_pos = self.ring.tail_pos();
+                // Corrupt slot: resynchronise to the tail if the producer has moved
+                // on. If the tail is still this position, retrying would spin forever.
+                let tail = self.ring.tail_pos();
+                if tail <= self.read_pos {
+                    return Err(libc::EINVAL);
+                }
+                self.read_pos = tail;
                 continue;
             };
             // Torn-read guard: if the tail advanced past us while we read, the
@@ -657,7 +717,7 @@ pub unsafe extern "C" fn peios_event_reader_close(reader: *mut peios_event_reade
 /// the `out` pointers are valid until the next call.
 ///
 /// # Safety
-/// `reader` must be open; `out` NULL or writable.
+/// `reader` must be open; `out` must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn peios_event_reader_next(
     reader: *mut peios_event_reader,
@@ -667,6 +727,10 @@ pub unsafe extern "C" fn peios_event_reader_next(
         set_errno(libc::EINVAL);
         return -1;
     };
+    if out.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
     match reader.next(out) {
         Ok(true) => 1,
         Ok(false) => 0,
@@ -743,6 +807,88 @@ mod tests {
         e
     }
 
+    struct RingFixture {
+        _mem: Vec<u64>,
+        ring: Ring,
+        capacity: usize,
+    }
+
+    impl RingFixture {
+        fn new(capacity: usize) -> Self {
+            let map_len = META_TOTAL + capacity * 2;
+            let mut mem = vec![0u64; map_len.div_ceil(core::mem::size_of::<u64>())];
+            let base = mem.as_mut_ptr() as *mut u8;
+            let ring = Ring {
+                base,
+                capacity: capacity as u64,
+                map_len,
+            };
+            let mut fixture = Self {
+                _mem: mem,
+                ring,
+                capacity,
+            };
+            fixture.store_u64(KMES_PRODUCER_GENERATION_OFFSET, 1);
+            fixture
+        }
+
+        fn store_u64(&mut self, off: u32, value: u64) {
+            unsafe {
+                let cell = &*(self.ring.base.add(off as usize) as *const AtomicU64);
+                cell.store(value, Ordering::Release);
+            }
+        }
+
+        fn set_positions(&mut self, tail: u64, write: u64) {
+            self.store_u64(KMES_PRODUCER_TAIL_POS_OFFSET, tail);
+            self.store_u64(KMES_PRODUCER_WRITE_POS_OFFSET, write);
+        }
+
+        fn write_event(&mut self, pos: u64, bytes: &[u8]) {
+            assert!(bytes.len() <= self.capacity);
+            let off = (pos & (self.capacity as u64 - 1)) as usize;
+            unsafe {
+                let data = self.ring.base.add(KMES_MAPPING_DATA_OFFSET as usize);
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), data.add(off), bytes.len());
+                if off + bytes.len() <= self.capacity {
+                    core::ptr::copy_nonoverlapping(
+                        bytes.as_ptr(),
+                        data.add(self.capacity + off),
+                        bytes.len(),
+                    );
+                }
+            }
+        }
+
+        fn reader(&self, read_pos: u64) -> peios_event_reader {
+            peios_event_reader {
+                ring: self.ring,
+                fd: -1,
+                cpu_id: 0,
+                read_pos,
+                last_seq: 0,
+                lost: 0,
+                generation: 1,
+            }
+        }
+    }
+
+    fn blank_event() -> peios_event {
+        peios_event {
+            timestamp: 0,
+            sequence: 0,
+            cpu_id: 0,
+            origin_class: 0,
+            effective_token_guid: [0; 16],
+            true_token_guid: [0; 16],
+            process_guid: [0; 16],
+            event_type: core::ptr::null(),
+            event_type_len: 0,
+            payload: core::ptr::null(),
+            payload_len: 0,
+        }
+    }
+
     #[test]
     fn parse_valid_event() {
         let et = b"net.connect";
@@ -801,5 +947,130 @@ mod tests {
         assert_eq!(core::mem::size_of::<peios_event_ring>(), 32);
         // peios_event carries the kernel header by value plus two borrowed pointers.
         assert!(core::mem::size_of::<peios_event>() >= 8 + 8 + 2 + 1 + 48 + 8 + 2 + 8 + 4);
+    }
+
+    #[test]
+    fn zeroed_ring_accessors_are_safe_sentinels() {
+        unsafe {
+            let mut ring = peios_event_ring { _opaque: [0; 4] };
+            assert_eq!(peios_event_ring_capacity(&ring), 0);
+            assert_eq!(peios_event_ring_write_pos(&ring), 0);
+            assert_eq!(peios_event_ring_tail_pos(&ring), 0);
+            assert_eq!(peios_event_ring_generation(&ring), 0);
+            peios_event_ring_set_need_wake(&ring, 1);
+
+            assert_eq!(
+                peios_event_ring_event_at(&ring, 0, core::ptr::null_mut()),
+                -1
+            );
+            assert_eq!(crate::error::get_errno(), libc::EINVAL);
+            assert_eq!(peios_event_ring_wait(&ring, 0, 0), -1);
+            assert_eq!(crate::error::get_errno(), libc::EINVAL);
+
+            peios_event_ring_unmap(&mut ring);
+            assert_eq!(ring._opaque, [0; 4]);
+        }
+    }
+
+    #[test]
+    fn ring_map_rejects_already_mapped_storage() {
+        unsafe {
+            let mut ring = peios_event_ring {
+                _opaque: [0x10000, 4096, (META_TOTAL + 8192) as u64, 0],
+            };
+            assert_eq!(peios_event_ring_map(-1, 4096, &mut ring), -1);
+            assert_eq!(crate::error::get_errno(), libc::EBUSY);
+        }
+    }
+
+    #[test]
+    fn ring_event_at_reads_wrap_boundary_event() {
+        let mut fixture = RingFixture::new(128);
+        let etype = b"wrap.type";
+        let payload = [0xc0u8];
+        let bytes = event(11, 44, 3, 2, etype, &payload);
+        let read_pos = 112;
+        assert!(read_pos + bytes.len() > fixture.capacity);
+        fixture.write_event(read_pos as u64, &bytes);
+        let mut out = blank_event();
+
+        unsafe {
+            assert_eq!(
+                fixture.ring.event_at(read_pos as u64, &mut out),
+                Some(bytes.len() as u64)
+            );
+            assert_eq!(out.sequence, 11);
+            assert_eq!(out.timestamp, 44);
+            assert_eq!(out.cpu_id, 3);
+            assert_eq!(out.origin_class, 2);
+            assert_eq!(out.event_type_len, etype.len() as u16);
+            assert_eq!(
+                core::slice::from_raw_parts(out.event_type as *const u8, etype.len()),
+                etype
+            );
+            assert_eq!(out.payload_len, payload.len() as u32);
+            assert_eq!(
+                core::slice::from_raw_parts(out.payload as *const u8, payload.len()),
+                &payload
+            );
+        }
+    }
+
+    #[test]
+    fn reader_next_counts_sequence_gaps() {
+        let mut fixture = RingFixture::new(1024);
+        let e1 = event(1, 10, 0, 0, b"a", &[0xc0]);
+        let e2 = event(4, 20, 0, 0, b"b", &[0xc0]);
+        let p2 = e1.len() as u64;
+        fixture.write_event(0, &e1);
+        fixture.write_event(p2, &e2);
+        fixture.set_positions(0, p2 + e2.len() as u64);
+        let mut reader = fixture.reader(0);
+        let mut out = blank_event();
+
+        unsafe {
+            assert!(reader.next(&mut out).unwrap());
+            assert_eq!(out.sequence, 1);
+            assert_eq!(reader.lost, 0);
+            assert!(reader.next(&mut out).unwrap());
+            assert_eq!(out.sequence, 4);
+            assert_eq!(reader.lost, 2);
+            assert!(!reader.next(&mut out).unwrap());
+        }
+    }
+
+    #[test]
+    fn reader_next_skips_to_tail_after_lapping() {
+        let mut fixture = RingFixture::new(1024);
+        let stale = event(1, 10, 0, 0, b"old", &[0xc0]);
+        let survivor = event(7, 30, 0, 0, b"new", &[0xc0]);
+        let tail = stale.len() as u64;
+        fixture.write_event(0, &stale);
+        fixture.write_event(tail, &survivor);
+        fixture.set_positions(tail, tail + survivor.len() as u64);
+        let mut reader = fixture.reader(0);
+        let mut out = blank_event();
+
+        unsafe {
+            assert!(reader.next(&mut out).unwrap());
+            assert_eq!(out.sequence, 7);
+            assert_eq!(reader.read_pos, tail + survivor.len() as u64);
+        }
+    }
+
+    #[test]
+    fn reader_next_reports_corrupt_current_slot() {
+        let mut fixture = RingFixture::new(1024);
+        fixture.write_event(0, &[0; HEADER_BASE]);
+        fixture.set_positions(0, HEADER_BASE as u64);
+        let mut reader = fixture.reader(0);
+        let mut out = blank_event();
+
+        unsafe {
+            assert!(matches!(
+                reader.next(&mut out),
+                Err(errno) if errno == libc::EINVAL
+            ));
+        }
     }
 }
