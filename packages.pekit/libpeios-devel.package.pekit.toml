@@ -18,6 +18,8 @@ libpeios = "{{version}}"
 
 [files]
 # Public headers (the shipping API: peios.h + peios/*.h).
-":usr/include/**"                  = "usr/include/"
+":usr/include/**"                           = "usr/include/"
 # Developer .so symlink for `-lpeios`.
-":usr/lib/x86_64-linux-peios/*.so" = "usr/lib/x86_64-linux-peios/"
+":usr/lib/x86_64-linux-peios/*.so"          = "usr/lib/x86_64-linux-peios/"
+# pkg-config descriptor (`pkg-config peios` for downstream builds).
+":usr/lib/x86_64-linux-peios/pkgconfig/peios.pc" = "usr/lib/x86_64-linux-peios/pkgconfig/"

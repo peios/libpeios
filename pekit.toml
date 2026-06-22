@@ -61,6 +61,18 @@ cp target/release/libpeios.a "$PEKIT_OUT/$LIBDIR/libpeios.a"
 cp include/peios.h "$PEKIT_OUT/usr/include/"
 cp include/peios/*.h "$PEKIT_OUT/usr/include/peios/"
 
+# pkg-config descriptor, so downstream builds (peios-sys, and any future C/Go
+# consumer) resolve libpeios via `pkg-config peios` instead of the
+# PEIOS_INCLUDE/PEIOS_LIB_DIR env overrides. The pkm UAPI headers <pkm/*.h> that
+# the peios headers reference live under the same /usr/include (shipped by
+# kernel-headers), so one -I${includedir} covers both peios/ and pkm/.
+PCVER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\1/')"
+mkdir -p "$PEKIT_OUT/$LIBDIR/pkgconfig"
+sed -e "s|@prefix@|/usr|g" \
+    -e "s|@libdir@|/$LIBDIR|g" \
+    -e "s|@version@|$PCVER|g" \
+    peios.pc.in > "$PEKIT_OUT/$LIBDIR/pkgconfig/peios.pc"
+
 # --- Debug split (mirrors glibc's post-install handling) ----------------------
 # debugedit rewrites the builder's source prefix ($SRC) in the DWARF to a stable
 # /usr/src/debug/libpeios (otherwise the .debug leaks the builder's homedir and

@@ -1,0 +1,11 @@
+prefix=@prefix@
+exec_prefix=${prefix}
+libdir=@libdir@
+includedir=${prefix}/include
+
+Name: peios
+Description: Peios userspace C ABI library (libpeios)
+URL: https://github.com/peios/libpeios
+Version: @version@
+Libs: -L${libdir} -lpeios
+Cflags: -I${includedir}
