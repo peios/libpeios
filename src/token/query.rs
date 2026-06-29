@@ -112,9 +112,38 @@ pub unsafe extern "C" fn peios_token_session_id(fd: c_int, out: *mut u32) -> c_i
 
 /// `peios_token_integrity` — the integrity-level RID
 /// (`KACS_TOKEN_CLASS_INTEGRITY_LEVEL`).
+///
+/// Unlike the scalar classes, `INTEGRITY_LEVEL` is SID-valued: the kernel
+/// returns the mandatory-label SID `S-1-16-<rid>` (12 bytes — an 8-byte SID
+/// header with identifier authority 16, plus one u32 sub-authority that is the
+/// integrity RID), the same shape as the OWNER/PRIMARY_GROUP SID classes. This
+/// helper reads that SID and hands back its trailing RID, so a 4-byte
+/// `query_into::<u32>` would (correctly) get -ERANGE from the kernel's size
+/// probe. Always exactly 12 bytes: an integrity SID never has more than one
+/// sub-authority.
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_integrity(fd: c_int, level_rid_out: *mut u32) -> c_int {
-    query_into(fd, KACS_TOKEN_CLASS_INTEGRITY_LEVEL, level_rid_out)
+    if level_rid_out.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut sid = [0u8; 12];
+    let n = peios_token_query(
+        fd,
+        KACS_TOKEN_CLASS_INTEGRITY_LEVEL,
+        sid.as_mut_ptr().cast(),
+        sid.len(),
+    );
+    if n < 0 {
+        return -1;
+    }
+    if n as usize != sid.len() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    // The RID is the single sub-authority: the last 4 bytes, little-endian.
+    *level_rid_out = u32::from_le_bytes([sid[8], sid[9], sid[10], sid[11]]);
+    0
 }
 
 /// `peios_token_privileges` — the privilege words (`KACS_TOKEN_CLASS_PRIVILEGES`).
