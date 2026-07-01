@@ -53,3 +53,30 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
     // SAFETY: `abort` never returns and performs no Rust unwinding.
     unsafe { abort() }
 }
+
+// Satisfy the EH-unwinding references that remain in a no-std cdylib even under
+// `panic = "abort"`: the precompiled sysroot `alloc` is built `panic = "unwind"`,
+// so its error paths leave dangling `rust_eh_personality` / `_Unwind_Resume`
+// relocations. Nothing resolves them in a std-less link — invisible to Rust
+// consumers (cargo drags in std's definitions) but fatal the instant a C program
+// loads libpeios.so (`symbol lookup error`). Define both as hidden assembler
+// stubs so they satisfy local relocations without joining the public dynamic ABI.
+// Nothing in libpeios may unwind; reaching either is a fatal internal bug, so the
+// personality reports a fatal error and `_Unwind_Resume` aborts. Mirrors librsi.
+#[cfg(all(not(test), target_arch = "x86_64"))]
+core::arch::global_asm!(
+    ".hidden rust_eh_personality",
+    ".globl rust_eh_personality",
+    ".type rust_eh_personality, @function",
+    "rust_eh_personality:",
+    "mov eax, 3",
+    "ret",
+    ".size rust_eh_personality, . - rust_eh_personality",
+
+    ".hidden _Unwind_Resume",
+    ".globl _Unwind_Resume",
+    ".type _Unwind_Resume, @function",
+    "_Unwind_Resume:",
+    "call abort",
+    ".size _Unwind_Resume, . - _Unwind_Resume",
+);
