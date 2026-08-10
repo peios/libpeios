@@ -15,6 +15,12 @@ description = "Peios userspace C ABI library - development headers and libraries
 # peios revision, so any revision of that libpeios satisfies it (§2.2.8
 # revision-omission rule).
 libpeios = "{{version}}"
+# The public headers #include <pkm/*.h> — the PKM userspace UAPI (sid.h, sd.h,
+# token.h, access.h, …) — which kernel-headers ships under usr/include/pkm/.
+# Without this a downstream `cc` against <peios/*.h> fails with "pkm/sid.h: No
+# such file or directory". Floor matches the toolchain's kernel-headers pin
+# (cf. gcc); any revision satisfies it.
+kernel-headers = ">= 6.16"
 
 [files]
 # Public headers (the shipping API: peios.h + peios/*.h).
