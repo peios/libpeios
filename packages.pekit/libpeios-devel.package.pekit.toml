@@ -18,9 +18,20 @@ libpeios = "{{version}}"
 # The public headers #include <pkm/*.h> — the PKM userspace UAPI (sid.h, sd.h,
 # token.h, access.h, …) — which kernel-headers ships under usr/include/pkm/.
 # Without this a downstream `cc` against <peios/*.h> fails with "pkm/sid.h: No
-# such file or directory". Floor matches the toolchain's kernel-headers pin
-# (cf. gcc); any revision satisfies it.
-kernel-headers = ">= 6.16"
+# such file or directory".
+#
+# By PACKAGE NAME, deliberately, where gcc and build-essentials-c ask for the
+# `linux-kernel-headers` virtual instead. They need the Linux syscall surface;
+# what this needs is <pkm/*.h>, which is the PKM UAPI / KACS ABI — the very
+# thing kernel-headers' own version tracks and the Linux version does not
+# describe at all. So the floor is a pkm version, and it rises when the PKM
+# UAPI gains something these headers use.
+#
+# The previous ">= 6.16" was doubly wrong: it named a Linux version on a
+# package versioned by pkm's SemVer, and it was satisfied by a vanilla-Linux
+# kernel-headers that ships no pkm/ directory at all — so the dependency read
+# as met while the compile it exists to guarantee still failed.
+kernel-headers = ">= 0.20.1-rc2"
 
 [files]
 # Public headers (the shipping API: peios.h + peios/*.h).
