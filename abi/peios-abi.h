@@ -217,6 +217,15 @@ struct peios_token_restrict {
   uint32_t flags;
 };
 
+struct peios_token_statistics {
+  uint64_t token_id;
+  uint64_t auth_id;
+  uint64_t modified_id;
+  uint32_t token_type;
+  uint32_t reserved;
+  uint64_t expiration;
+};
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -704,6 +713,8 @@ int peios_token_install(int fd);
 
 int peios_token_integrity(int fd, uint32_t *level_rid_out);
 
+int peios_token_interactivity_scope(int fd, uint32_t *out);
+
 int peios_token_link(int elevated_fd, int filtered_fd, uint64_t session_id);
 
 int peios_token_open_peer(int conn_fd);
@@ -728,7 +739,11 @@ int peios_token_revert(void);
 
 int peios_token_session_id(int fd, uint32_t *out);
 
+int peios_token_set_interactivity_scope(int fd, uint32_t scope);
+
 int peios_token_set_session_id(int fd, uint32_t session_id);
+
+int peios_token_statistics(int fd, struct peios_token_statistics *out);
 
 int peios_token_type(int fd, uint32_t *out);
 

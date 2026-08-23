@@ -331,14 +331,21 @@ pub unsafe extern "C" fn peios_token_adjust_default(
     0
 }
 
-/// `peios_token_set_session_id` — change the interactive session id.
+/// `peios_token_set_interactivity_scope` — change the token's interactive
+/// environment scope.
 #[no_mangle]
-pub unsafe extern "C" fn peios_token_set_session_id(fd: c_int, session_id: u32) -> c_int {
-    let mut value = session_id;
+pub unsafe extern "C" fn peios_token_set_interactivity_scope(fd: c_int, scope: u32) -> c_int {
+    let mut value = scope;
     if ioc(fd, KACS_IOC_ADJUST_SESSIONID as c_ulong, &mut value) < 0 {
         return -1;
     }
     0
+}
+
+/// Compatibility alias for the historical, ambiguous API name.
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_set_session_id(fd: c_int, session_id: u32) -> c_int {
+    unsafe { peios_token_set_interactivity_scope(fd, session_id) }
 }
 
 #[cfg(test)]

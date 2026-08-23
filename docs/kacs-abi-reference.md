@@ -170,7 +170,7 @@ Per-class output payload layouts:
 | 0x05 | INTEGRITY_LEVEL | Binary integrity SID `S-1-16-{rid}` |
 | 0x06 | OWNER | Binary SID (from owner_sid_index) |
 | 0x07 | PRIMARY_GROUP | Binary SID (from primary_group_index) |
-| 0x08 | SESSION_ID | 4 B `[interactive_session_id:u32]` |
+| 0x08 | INTERACTIVITY_SCOPE | 4 B `[interactivity_scope:u32]` |
 | 0x09 | RESTRICTED_SIDS | as GROUPS; count=0 if unrestricted |
 | 0x0A | SOURCE | 16 B `[name:8][source_id:u64]` |
 | 0x0B | STATISTICS | 40 B `[token_id:u64][auth_id:u64][modified_id:u64][type:u32][_pad:u32][expiration:u64]` |

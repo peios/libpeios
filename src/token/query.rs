@@ -12,7 +12,8 @@ use core::ffi::{c_int, c_ulong, c_void};
 
 use peios_uapi::{
     kacs_query_args, KACS_IOC_QUERY, KACS_TOKEN_CLASS_INTEGRITY_LEVEL, KACS_TOKEN_CLASS_PRIVILEGES,
-    KACS_TOKEN_CLASS_SESSION_ID, KACS_TOKEN_CLASS_TYPE, KACS_TOKEN_CLASS_USER,
+    KACS_TOKEN_CLASS_SESSION_ID, KACS_TOKEN_CLASS_STATISTICS, KACS_TOKEN_CLASS_TYPE,
+    KACS_TOKEN_CLASS_USER,
 };
 
 use crate::error::set_errno;
@@ -25,6 +26,18 @@ pub struct peios_privilege_set {
     pub enabled: u64,
     pub enabled_by_default: u64,
     pub used: u64,
+}
+
+/// `struct peios_token_statistics` — the fixed 40-byte
+/// `KACS_TOKEN_CLASS_STATISTICS` result.
+#[repr(C)]
+pub struct peios_token_statistics {
+    pub token_id: u64,
+    pub auth_id: u64,
+    pub modified_id: u64,
+    pub token_type: u32,
+    pub reserved: u32,
+    pub expiration: u64,
 }
 
 /// `peios_token_query` — read an information class, getxattr-style.
@@ -104,10 +117,29 @@ pub unsafe extern "C" fn peios_token_type(fd: c_int, out: *mut u32) -> c_int {
     query_into(fd, KACS_TOKEN_CLASS_TYPE, out)
 }
 
-/// `peios_token_session_id` — the session id (`KACS_TOKEN_CLASS_SESSION_ID`).
+/// `peios_token_interactivity_scope` — the interactive environment scope
+/// (`KACS_TOKEN_CLASS_SESSION_ID`, renamed INTERACTIVITY_SCOPE in the current
+/// UAPI). This is not the token's LogonSession LUID / `auth_id`.
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_interactivity_scope(fd: c_int, out: *mut u32) -> c_int {
+    query_into(fd, KACS_TOKEN_CLASS_SESSION_ID, out)
+}
+
+/// Compatibility alias for the historical, ambiguous API name. The queried
+/// value is an interactivity scope, not a LogonSession id.
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_session_id(fd: c_int, out: *mut u32) -> c_int {
-    query_into(fd, KACS_TOKEN_CLASS_SESSION_ID, out)
+    unsafe { peios_token_interactivity_scope(fd, out) }
+}
+
+/// `peios_token_statistics` — token ids, including the LogonSession LUID in
+/// `auth_id` (`KACS_TOKEN_CLASS_STATISTICS`).
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_statistics(
+    fd: c_int,
+    out: *mut peios_token_statistics,
+) -> c_int {
+    query_into(fd, KACS_TOKEN_CLASS_STATISTICS, out)
 }
 
 /// `peios_token_integrity` — the integrity-level RID
@@ -168,7 +200,18 @@ mod tests {
             assert_eq!(errno(), libc::EINVAL);
 
             *libc::__errno_location() = 0;
+            assert_eq!(
+                peios_token_interactivity_scope(-1, core::ptr::null_mut()),
+                -1
+            );
+            assert_eq!(errno(), libc::EINVAL);
+
+            *libc::__errno_location() = 0;
             assert_eq!(peios_token_session_id(-1, core::ptr::null_mut()), -1);
+            assert_eq!(errno(), libc::EINVAL);
+
+            *libc::__errno_location() = 0;
+            assert_eq!(peios_token_statistics(-1, core::ptr::null_mut()), -1);
             assert_eq!(errno(), libc::EINVAL);
 
             *libc::__errno_location() = 0;
@@ -179,5 +222,27 @@ mod tests {
             assert_eq!(peios_token_privileges(-1, core::ptr::null_mut()), -1);
             assert_eq!(errno(), libc::EINVAL);
         }
+    }
+
+    #[test]
+    fn token_statistics_matches_the_kacs_wire_shape() {
+        assert_eq!(core::mem::size_of::<peios_token_statistics>(), 40);
+        assert_eq!(core::mem::offset_of!(peios_token_statistics, token_id), 0);
+        assert_eq!(core::mem::offset_of!(peios_token_statistics, auth_id), 8);
+        assert_eq!(
+            core::mem::offset_of!(peios_token_statistics, modified_id),
+            16
+        );
+        assert_eq!(
+            core::mem::offset_of!(peios_token_statistics, token_type),
+            24
+        );
+        assert_eq!(core::mem::offset_of!(peios_token_statistics, reserved), 28);
+        assert_eq!(
+            core::mem::offset_of!(peios_token_statistics, expiration),
+            32
+        );
+        assert_eq!(KACS_TOKEN_CLASS_SESSION_ID, 0x08);
+        assert_eq!(KACS_TOKEN_CLASS_STATISTICS, 0x0b);
     }
 }
