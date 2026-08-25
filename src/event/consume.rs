@@ -376,9 +376,14 @@ unsafe fn map_ring(fd: c_int, capacity: u64) -> Result<Ring, c_int> {
 
 /// `peios_event_attach` — attach to CPU `cpu_id`'s ring buffer, returning a fd
 /// and writing the data-region capacity to `capacity_out`. Returns `-1` with
-/// errno (`EINVAL` once `cpu_id` is past the last CPU — the idiom for discovering
-/// the CPU count — `EPERM` without `SeSecurityPrivilege`). Requires
+/// errno (`EINVAL` if `cpu_id` is at or beyond the slot count, or names a slot
+/// that holds no ring; `EPERM` without `SeSecurityPrivilege`). Requires
 /// `SeSecurityPrivilege`.
+///
+/// Do not discover the ring set by counting up until `EINVAL`: slots are
+/// indexed by logical CPU id and a slot inside the range can be empty, so that
+/// idiom stops at the first hole. Call [`peios_event_slot_count`] and walk
+/// every index below it, skipping the ones that answer `EINVAL`.
 ///
 /// # Safety
 /// `capacity_out` must be NULL or valid for a `u64` write.
@@ -388,6 +393,33 @@ pub unsafe extern "C" fn peios_event_attach(cpu_id: u32, capacity_out: *mut u64)
         SYS_KMES_ATTACH,
         cpu_id as c_long,
         capacity_out as usize as c_long,
+    ))
+}
+
+/// The `cpu_id` sentinel that asks `kmes_attach` for the slot count instead of
+/// a ring.
+///
+/// Duplicated from `<pkm/kmes.h>` rather than imported: `peios-uapi` is pinned
+/// to a pkm revision that predates the constant. Replace this with
+/// `peios_uapi::KMES_ATTACH_QUERY_SLOTS` when the pin is bumped.
+const KMES_ATTACH_QUERY_SLOTS: u32 = 0xFFFF_FFFF;
+
+/// `peios_event_slot_count` — write the number of ring slots to `slots_out`.
+///
+/// Returns 0, or `-1` with errno (`EPERM` without `SeSecurityPrivilege`,
+/// `EFAULT` for an inaccessible `slots_out`, `ENOMEM` if KMES is not up). No
+/// descriptor is opened. This is the bound a consumer enumerates against; a
+/// slot within it may still hold no ring, which `peios_event_attach` reports
+/// as `EINVAL`.
+///
+/// # Safety
+/// `slots_out` must be valid for a `u64` write.
+#[no_mangle]
+pub unsafe extern "C" fn peios_event_slot_count(slots_out: *mut u64) -> c_int {
+    ret_int(syscall2(
+        SYS_KMES_ATTACH,
+        KMES_ATTACH_QUERY_SLOTS as c_long,
+        slots_out as usize as c_long,
     ))
 }
 

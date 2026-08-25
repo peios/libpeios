@@ -94,11 +94,26 @@ struct peios_event {
 
 /*
  * Attach to CPU @cpu_id's ring buffer: returns a fd and writes the data-region
- * capacity to *@capacity_out. Discover the CPU count by counting up from 0 until
- * this returns -1 with errno == EINVAL. Requires SeSecurityPrivilege (EPERM
- * otherwise). The low-level path then mmaps the fd via peios_event_ring_map().
+ * capacity to *@capacity_out. Returns -1 with errno == EINVAL if @cpu_id is at
+ * or beyond the slot count, or names a slot that holds no ring. Requires
+ * SeSecurityPrivilege (EPERM otherwise). The low-level path then mmaps the fd
+ * via peios_event_ring_map().
+ *
+ * Do NOT discover the ring set by counting up until EINVAL. Slots are indexed
+ * by logical CPU id, so a slot inside the range can be empty, and that idiom
+ * stops at the first hole -- abandoning every ring above it. Use
+ * peios_event_slot_count() and walk every index below the count, skipping the
+ * ones that answer EINVAL.
  */
 int peios_event_attach(uint32_t cpu_id, uint64_t *capacity_out);
+
+/*
+ * Write the number of ring slots to *@slots_out and return 0, or -1 with errno
+ * (EPERM without SeSecurityPrivilege, EFAULT if @slots_out is inaccessible,
+ * ENOMEM if KMES is not up). Opens no descriptor. This is the bound to
+ * enumerate against; a slot within it may still hold no ring.
+ */
+int peios_event_slot_count(uint64_t *slots_out);
 
 /* ---- high-level reader ----------------------------------------------- */
 
