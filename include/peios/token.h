@@ -57,8 +57,26 @@ int peios_token_open_process(int pidfd, uint32_t access);
 int peios_token_open_thread(int pidfd, int tid, uint32_t access);
 
 /* The peer-identity token captured at connect() on a connected Unix
- * stream/seqpacket socket. The handle carries fixed QUERY | IMPERSONATE rights. */
+ * stream/seqpacket socket — getsockopt(SOL_KACS, KACS_SO_PEER_TOKEN). The
+ * handle carries fixed QUERY | IMPERSONATE rights. ENOTCONN if the socket is
+ * not connected; ENODATA if it carries no captured identity; EOPNOTSUPP on a
+ * socket KACS captures no identity for (datagram, non-Unix). */
 int peios_token_open_peer(int conn_fd);
+
+/* Impersonate the peer of @conn_fd on the calling thread: open the peer token,
+ * install it, close the fd. The convenience form of peios_token_open_peer() +
+ * peios_token_impersonate() for a handler that impersonates, works, and
+ * reverts on one thread. Returns 0, or -1 with errno. */
+int peios_token_impersonate_peer(int conn_fd);
+
+/* Bound how far this socket's identity may travel when the peer captures it
+ * (KACS_IMLEVEL_*) — setsockopt(SOL_KACS, KACS_SO_IMPERSONATION_LEVEL). Set by
+ * the client before connect(); the default is KACS_IMLEVEL_IMPERSONATION.
+ * EISCONN once connected. Returns 0, or -1 with errno. */
+int peios_socket_set_impersonation_level(int sock_fd, uint32_t level);
+
+/* Read the level set on @sock_fd into *@level. Returns 0, or -1 with errno. */
+int peios_socket_get_impersonation_level(int sock_fd, uint32_t *level);
 
 /* Mint a token from a pre-built token-spec buffer (escape hatch; prefer the
  * builder below). Requires SeCreateTokenPrivilege. */

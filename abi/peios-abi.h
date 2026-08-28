@@ -341,6 +341,8 @@ int peios_event_ring_wait(const struct peios_event_ring *ring, uint64_t read_pos
 
 uint64_t peios_event_ring_write_pos(const struct peios_event_ring *ring);
 
+int peios_event_slot_count(uint64_t *slots_out);
+
 ptrdiff_t peios_fd_get_sd(int fd, uint32_t secinfo, void *buf, size_t cap);
 
 int peios_fd_set_sd(int fd, uint32_t secinfo, const void *sd, size_t len);
@@ -611,6 +613,10 @@ bool peios_sid_valid(const void *sid, size_t len);
 
 ptrdiff_t peios_sid_well_known(void *out, size_t cap, int which);
 
+int peios_socket_get_impersonation_level(int sock_fd, uint32_t *level);
+
+int peios_socket_set_impersonation_level(int sock_fd, uint32_t level);
+
 int peios_token_adjust_default(int fd,
                                const void *dacl,
                                size_t len,
@@ -708,6 +714,8 @@ int peios_token_duplicate(int fd, uint32_t access, uint8_t token_type, uint8_t i
 int peios_token_get_linked(int fd);
 
 int peios_token_impersonate(int fd);
+
+int peios_token_impersonate_peer(int conn_fd);
 
 int peios_token_install(int fd);
 

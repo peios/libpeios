@@ -4,7 +4,7 @@
 **Source:** Extracted from `learn/specs/psd-004--kacs/v0.20/` on 2026-06-14.
 **Purpose:** Working ABI reference for designing/implementing libpeios's KACS modules (`<peios/security.h>`, `<peios/token.h>`, `<peios/access.h>`, `<peios/file.h>`). The uapi headers define the constants and the struct-based argument layouts; this digest fills in the *scalar syscall calling conventions* and *semantics* the headers don't carry. Re-verify against the spec before relying on any single fact here — see the GAPS section for known soft spots.
 
-**Global conventions:** LP64/x86_64, little-endian *except* SID `IdentifierAuthority` (big-endian, 48-bit). Success ≥ 0, failure = `-errno`. No PKM-specific errnos. Token-fd ioctl magic `'K'` = `0x4B`. Syscall numbers: KACS 1000–1027.
+**Global conventions:** LP64/x86_64, little-endian *except* SID `IdentifierAuthority` (big-endian, 48-bit). Success ≥ 0, failure = `-errno`. No PKM-specific errnos. Token-fd ioctl magic `'K'` = `0x4B`. Syscall numbers: KACS 1000–1027 (1010, 1011, 1013 retired — see below; peer identity is the `SOL_KACS` socket-option level).
 
 > Errno note: the spec documents errnos inline and unevenly; there is no exhaustive per-call errno table. Standard Linux errnos for bad fds/pidfds/pointers (`EBADF`, `ESRCH`, `EFAULT`) are mostly implied, not enumerated.
 
@@ -58,24 +58,18 @@
 - Requires **SeTcbPrivilege**. Succeeds only if the session exists AND has zero live tokens AND no linked-token state AND no in-flight reference. Emits `logon-session-destroyed` KMES event.
 - Errno: `-ENOENT` nonexistent; `-EBUSY` any live token / linked-token state / in-flight ref.
 
-### 1010 `kacs_open_peer_token` (§13.1, §4.8)
-`long kacs_open_peer_token(int conn_fd)`  *(named `sock_fd` in §13.1 — naming inconsistency)*
-- Extracts the peer identity snapshot captured at `connect()` from a connected **Unix SOCK_STREAM/SOCK_SEQPACKET** socket. No desired-access param.
-- Returns: token fd with **fixed** mask `TOKEN_QUERY | TOKEN_IMPERSONATE` (0x000C).
-- Datagram, socketpair, SCM_CREDENTIALS/SCM_SECURITY produce NO peer token in v0.20 → `-EACCES`.
-
-### 1011 `kacs_impersonate_peer` (§13.1, §9)
-`long kacs_impersonate_peer(int conn_fd)`
-- open+impersonate+close combined. Two-gate model (Part 5). If a gate caps the level, it's **silently reduced** — still returns 0. Overwrites any existing impersonation.
-- Errno: `-EPERM` for restricted-server→unrestricted-client same-user impersonation (sandbox-escape guard). `-EACCES` if no captured KACS peer token (use explicit token fd + `KACS_IOC_IMPERSONATE`).
+### 1010 / 1011 — retired (socket options replace them)
+`kacs_open_peer_token` (1010) and `kacs_impersonate_peer` (1011) no longer exist as syscalls; the numbers are permanent holes (a stale binary gets `-ENOSYS`). Peer identity is read through the **`SOL_KACS` socket-option level** (`<pkm/socket.h>`, `SOL_KACS = 4096`), dispatched by the kernel ahead of the protocol's own sockopt handlers:
+- `getsockopt(conn_fd, SOL_KACS, KACS_SO_PEER_TOKEN, &fd, &len)` — writes a new token fd (O_CLOEXEC) for the peer identity captured at `connect()` on a connected **Unix SOCK_STREAM/SOCK_SEQPACKET** socket. Fixed mask `TOKEN_QUERY | TOKEN_IMPERSONATE` (0x000C). Errno: `-ENOTCONN` not connected; `-ENODATA` connected but no captured identity (socketpair); `-EOPNOTSUPP` datagram / non-Unix; `-EINVAL` optlen < sizeof(int); `-ENOPROTOOPT` via setsockopt.
+- The fused open+impersonate+close is a libpeios convenience, `peios_token_impersonate_peer(conn_fd)` = `peios_token_open_peer` + `KACS_IOC_IMPERSONATE` + `close`. Two-gate semantics are those of the ioctl: a capped level is **silently reduced** — still returns 0; `-EPERM` for restricted-server→unrestricted-client same-user impersonation.
 
 ### 1012 `kacs_revert` (§13.1, §9.3)
 `long kacs_revert(void)` — restores the calling thread to its primary token. No privilege. Returns 0 always (incl. when not impersonating).
 
-### 1013 `kacs_set_impersonation_level` (§13.1, §9.1)
-`long kacs_set_impersonation_level(int sock_fd, u32 level)`
-- Called by the **client** on an **unconnected** Unix stream/seqpacket socket before `connect()`. Sets the max level a server MAY use.
-- `level`: ANONYMOUS=0, IDENTIFICATION=1, IMPERSONATION=2, DELEGATION=3. Default if never called = IMPERSONATION.
+### 1013 — retired (`KACS_SO_IMPERSONATION_LEVEL`)
+`kacs_set_impersonation_level` (1013) is a permanent hole. The level is a socket option: `setsockopt(sock_fd, SOL_KACS, KACS_SO_IMPERSONATION_LEVEL, &u32, 4)`, called by the **client** on an **unconnected** Unix stream/seqpacket socket before `connect()`; `getsockopt` reads it back.
+- `level`: ANONYMOUS=0, IDENTIFICATION=1, IMPERSONATION=2, DELEGATION=3. Default if never set = IMPERSONATION.
+- Errno: `-EISCONN` once connected; `-EINVAL` bad level or optlen < 4; `-EOPNOTSUPP` datagram / non-Unix.
 
 ### 1020 `kacs_open` (§13.1, §11)
 `long kacs_open(int dirfd, const char *path, struct kacs_open_how *uhow, size_t howsize, u32 *status_out)`

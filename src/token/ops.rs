@@ -1,11 +1,12 @@
 //! Syscall-backed token operations — the fd-returning open/create calls of
 //! `<peios/token.h>` (plus the non-fd `peios_session_destroy_empty` and
-//! `peios_token_revert`).
+//! `peios_token_revert`), and the socket-option surface for peer identity.
 //!
-//! Each is a thin wrapper over a `SYS_KACS_*` syscall; the returned token fd
-//! carries `O_CLOEXEC` (set unconditionally by the kernel). These cross the
-//! kernel boundary, so they are exercised live under Provium, not in
-//! `cargo test`. Ioctl-backed token actions live in the sibling modules.
+//! Each is a thin wrapper over a `SYS_KACS_*` syscall or a `SOL_KACS` socket
+//! option; the returned token fd carries `O_CLOEXEC` (set unconditionally by
+//! the kernel). These cross the kernel boundary, so they are exercised live
+//! under Provium, not in `cargo test`. Ioctl-backed token actions live in the
+//! sibling modules.
 
 #![allow(non_camel_case_types)]
 
@@ -15,14 +16,21 @@ use alloc::vec::Vec;
 
 use peios_uapi::{
     KACS_SESSION_SPEC_MAX_BYTES, SYS_KACS_CREATE_SESSION, SYS_KACS_CREATE_TOKEN,
-    SYS_KACS_DESTROY_EMPTY_SESSION, SYS_KACS_OPEN_PEER_TOKEN, SYS_KACS_OPEN_PROCESS_TOKEN,
-    SYS_KACS_OPEN_SELF_TOKEN, SYS_KACS_OPEN_THREAD_TOKEN, SYS_KACS_REVERT,
+    SYS_KACS_DESTROY_EMPTY_SESSION, SYS_KACS_OPEN_PROCESS_TOKEN, SYS_KACS_OPEN_SELF_TOKEN,
+    SYS_KACS_OPEN_THREAD_TOKEN, SYS_KACS_REVERT,
 };
+
+// `<pkm/socket.h>` — the SOL_KACS socket-option level. Mirrored here until the
+// `peios-uapi` pin advances to a pkm revision that carries the header; swap in
+// `peios_uapi::{SOL_KACS, KACS_SO_PEER_TOKEN, KACS_SO_IMPERSONATION_LEVEL}` then.
+const SOL_KACS: c_long = 4096;
+const KACS_SO_PEER_TOKEN: c_long = 1;
+const KACS_SO_IMPERSONATION_LEVEL: c_long = 2;
 
 use crate::abi::{cstr_bytes, try_extend};
 use crate::error::set_errno;
 use crate::security::sid_valid;
-use crate::sys::{ret_int, syscall0, syscall1, syscall2, syscall3};
+use crate::sys::{ret_int, syscall0, syscall1, syscall2, syscall3, syscall5};
 
 /// Mint a token from a spec buffer at `ptr`/`len`. Shared by
 /// `peios_token_create_raw` and `peios_token_builder_create`; the kernel
@@ -67,10 +75,89 @@ pub unsafe extern "C" fn peios_token_open_thread(pidfd: c_int, tid: c_int, acces
     ))
 }
 
-/// `peios_token_open_peer` — open a Unix-socket peer's identity token.
+/// `peios_token_open_peer` — open a Unix-socket peer's identity token:
+/// `getsockopt(conn_fd, SOL_KACS, KACS_SO_PEER_TOKEN)`. The kernel writes a
+/// new token fd into the option value.
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_open_peer(conn_fd: c_int) -> c_int {
-    ret_int(syscall1(SYS_KACS_OPEN_PEER_TOKEN, conn_fd as c_long))
+    let mut fd: c_int = -1;
+    let mut len: libc::socklen_t = core::mem::size_of::<c_int>() as libc::socklen_t;
+    let r = syscall5(
+        libc::SYS_getsockopt as u32,
+        conn_fd as c_long,
+        SOL_KACS,
+        KACS_SO_PEER_TOKEN,
+        core::ptr::addr_of_mut!(fd) as usize as c_long,
+        core::ptr::addr_of_mut!(len) as usize as c_long,
+    );
+    if r < 0 {
+        return -1;
+    }
+    fd
+}
+
+/// `peios_token_impersonate_peer` — impersonate a Unix-socket peer on the
+/// calling thread: open the peer token, install it (`KACS_IOC_IMPERSONATE`),
+/// and close the fd. The convenience form of `peios_token_open_peer` +
+/// `peios_token_impersonate` for a handler that impersonates, works, and
+/// reverts on one thread. Returns 0, or -1 with errno.
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_impersonate_peer(conn_fd: c_int) -> c_int {
+    let fd = peios_token_open_peer(conn_fd);
+    if fd < 0 {
+        return -1;
+    }
+    let r = crate::token::actions::peios_token_impersonate(fd);
+    let saved = *libc::__errno_location();
+    libc::close(fd);
+    *libc::__errno_location() = saved;
+    r
+}
+
+/// `peios_socket_set_impersonation_level` — bound how far this socket's
+/// identity may travel when the peer captures it:
+/// `setsockopt(sock_fd, SOL_KACS, KACS_SO_IMPERSONATION_LEVEL)`. Set by the
+/// client before `connect()`. Returns 0, or -1 with errno.
+#[no_mangle]
+pub unsafe extern "C" fn peios_socket_set_impersonation_level(sock_fd: c_int, level: u32) -> c_int {
+    let level: u32 = level;
+    ret_int(syscall5(
+        libc::SYS_setsockopt as u32,
+        sock_fd as c_long,
+        SOL_KACS,
+        KACS_SO_IMPERSONATION_LEVEL,
+        core::ptr::addr_of!(level) as usize as c_long,
+        core::mem::size_of::<u32>() as c_long,
+    ))
+}
+
+/// `peios_socket_get_impersonation_level` — read the level set on this socket:
+/// `getsockopt(sock_fd, SOL_KACS, KACS_SO_IMPERSONATION_LEVEL)`. Writes the
+/// `KACS_IMLEVEL_*` value to `*level`. Returns 0, or -1 with errno.
+#[no_mangle]
+pub unsafe extern "C" fn peios_socket_get_impersonation_level(
+    sock_fd: c_int,
+    level: *mut u32,
+) -> c_int {
+    if level.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    let mut val: u32 = 0;
+    let mut len: libc::socklen_t = core::mem::size_of::<u32>() as libc::socklen_t;
+    let r = syscall5(
+        libc::SYS_getsockopt as u32,
+        sock_fd as c_long,
+        SOL_KACS,
+        KACS_SO_IMPERSONATION_LEVEL,
+        core::ptr::addr_of_mut!(val) as usize as c_long,
+        core::ptr::addr_of_mut!(len) as usize as c_long,
+    );
+    if r < 0 {
+        return -1;
+    }
+    *level = val;
+    0
 }
 
 /// `peios_token_revert` — revert the calling thread to its own identity,
