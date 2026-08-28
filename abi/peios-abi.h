@@ -621,6 +621,10 @@ int peios_socket_set_impersonation_level(int sock_fd, uint32_t level);
 
 int peios_socket_set_pass_token(int sock_fd, bool on);
 
+ptrdiff_t peios_sysv_get_sd(uint32_t kind, int id, uint32_t secinfo, void *buf, size_t cap);
+
+int peios_sysv_set_sd(uint32_t kind, int id, uint32_t secinfo, const void *sd, size_t len);
+
 int peios_token_adjust_default(int fd,
                                const void *dacl,
                                size_t len,

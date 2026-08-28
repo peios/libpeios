@@ -24,6 +24,7 @@
 
 #include <pkm/sd.h>		/* struct kacs_generic_mapping */
 #include <pkm/file.h>
+#include <pkm/ipc.h>		/* KACS_SD_AT_SYSV_* */
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,6 +63,19 @@ ssize_t peios_file_get_sd(int dirfd, const char *path, uint32_t secinfo,
 /* Write the @secinfo components of @sd onto a file; preserves the rest. */
 int peios_file_set_sd(int dirfd, const char *path, uint32_t secinfo,
 		      const void *sd, size_t len, uint32_t at_flags);
+
+/*
+ * System V IPC objects — message queues, shared memory segments and semaphore
+ * arrays — carry security descriptors too, but have no fd and no path: they are
+ * addressed by kind (one of the KACS_SD_AT_SYSV_* flags from <pkm/ipc.h>) and
+ * the object id that shmget/msgget/semget returned. The kernel looks the id up
+ * in the caller's IPC namespace (EINVAL unknown, EIDRM removed). Same
+ * getxattr-style contract as the calls above.
+ */
+ssize_t peios_sysv_get_sd(uint32_t kind, int id, uint32_t secinfo,
+			  void *buf, size_t cap);
+int	peios_sysv_set_sd(uint32_t kind, int id, uint32_t secinfo,
+			  const void *sd, size_t len);
 
 /*
  * fd-targeted SD get/set — operate on the object @fd already refers to. The

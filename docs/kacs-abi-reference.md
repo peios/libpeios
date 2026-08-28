@@ -96,6 +96,7 @@
 - **Output**: one self-relative SD *subset* (only requested components; absent components omitted, PRESENT bit clear).
 - **Return value = total SD size in bytes, ALWAYS** (even on probe). `buf_len=0` is the **size-probe** (writes nothing). **`-ERANGE` is NOT used.** *(Behavior for a non-zero-but-too-small buffer is under-specified — see GAPS #2.)*
 - Constraint: SACL and LABEL MUST NOT be requested together → `-EINVAL`.
+- **System V IPC target**: `flags` carrying one of `KACS_SD_AT_SYSV_SHM` (0x01000000) / `_MSG` (0x02000000) / `_SEM` (0x04000000) (`<pkm/ipc.h>`) addresses a SysV object by kind: `dirfd` = the object id, `path` MUST be NULL, no other flag bits allowed. Looked up in the caller's IPC namespace: unknown id → `-EINVAL`, removed → `-EIDRM`. Required rights as for any object (READ_CONTROL / ACCESS_SYSTEM_SECURITY; set: WRITE_DAC / WRITE_OWNER), checked live against the object's SD. Applies to `kacs_set_sd` too. libpeios: `peios_sysv_get_sd` / `peios_sysv_set_sd`.
 - **AT_EMPTY_PATH fd-type dispatch**: file fd → checks required right vs fd's cached granted mask (no AccessCheck); O_PATH fd → live AccessCheck vs file SD; pidfd → process SD (live check); token fd → token's own SD (live check; the token fd's cached mask is for ioctls, NOT SD queries).
 - Missing-SD: depends on mount policy (deny vs synthesize).
 

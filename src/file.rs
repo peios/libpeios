@@ -332,6 +332,39 @@ pub unsafe extern "C" fn peios_file_set_sd(
     set_sd_via_syscall(dirfd, path, secinfo, sd, len, at_flags)
 }
 
+/// `peios_sysv_get_sd` — read the SD of a System V IPC object addressed by
+/// `kind` (a `KACS_SD_AT_SYSV_*` flag) and id. The kernel rejects a path with
+/// a SysV flag, so none is passed.
+///
+/// # Safety
+/// `buf` valid for `cap` bytes when `cap != 0`.
+#[no_mangle]
+pub unsafe extern "C" fn peios_sysv_get_sd(
+    kind: u32,
+    id: c_int,
+    secinfo: u32,
+    buf: *mut c_void,
+    cap: usize,
+) -> isize {
+    get_sd_via_syscall(id, core::ptr::null(), secinfo, buf, cap, kind)
+}
+
+/// `peios_sysv_set_sd` — write the `secinfo` components of `sd` onto a System
+/// V IPC object addressed by `kind` and id, preserving the rest.
+///
+/// # Safety
+/// `sd` valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn peios_sysv_set_sd(
+    kind: u32,
+    id: c_int,
+    secinfo: u32,
+    sd: *const c_void,
+    len: usize,
+) -> c_int {
+    set_sd_via_syscall(id, core::ptr::null(), secinfo, sd, len, kind)
+}
+
 /// `peios_fd_get_sd` — read the SD of the object `fd` already refers to (empty
 /// path + `AT_EMPTY_PATH`). getxattr-style, like [`peios_file_get_sd`].
 ///
