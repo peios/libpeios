@@ -70,13 +70,24 @@ int peios_token_open_peer(int conn_fd);
 int peios_token_impersonate_peer(int conn_fd);
 
 /* Bound how far this socket's identity may travel when the peer captures it
- * (KACS_IMLEVEL_*) — setsockopt(SOL_KACS, KACS_SO_IMPERSONATION_LEVEL). Set by
- * the client before connect(); the default is KACS_IMLEVEL_IMPERSONATION.
- * EISCONN once connected. Returns 0, or -1 with errno. */
+ * (KACS_IMLEVEL_*) — setsockopt(SOL_KACS, KACS_SO_IMPERSONATION_LEVEL).
+ * Usually set by the client before connect(); the default is
+ * KACS_IMLEVEL_IMPERSONATION. May be changed at any time — it bounds every
+ * capture made from then on, at connect() and at each send that conveys
+ * identity. Returns 0, or -1 with errno. */
 int peios_socket_set_impersonation_level(int sock_fd, uint32_t level);
 
 /* Read the level set on @sock_fd into *@level. Returns 0, or -1 with errno. */
 int peios_socket_get_impersonation_level(int sock_fd, uint32_t *level);
+
+/* Sender-side automation (KACS_SO_PASS_TOKEN): while on, every send from
+ * @sock_fd carries the sender's effective identity as a KACS_SCM_TOKEN,
+ * derived at the socket's impersonation level. The peer's register
+ * (peios_token_open_peer) then follows the identity actually writing each
+ * message — a pooled or multiplexed connection conveys whoever is
+ * impersonating at each send. Changes nothing about trust: a sender can
+ * always attest to what it is. Returns 0, or -1 with errno. */
+int peios_socket_set_pass_token(int sock_fd, bool on);
 
 /* Mint a token from a pre-built token-spec buffer (escape hatch; prefer the
  * builder below). Requires SeCreateTokenPrivilege. */

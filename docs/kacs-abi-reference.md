@@ -68,8 +68,14 @@
 
 ### 1013 — retired (`KACS_SO_IMPERSONATION_LEVEL`)
 `kacs_set_impersonation_level` (1013) is a permanent hole. The level is a socket option: `setsockopt(sock_fd, SOL_KACS, KACS_SO_IMPERSONATION_LEVEL, &u32, 4)`, called by the **client** on an **unconnected** Unix stream/seqpacket socket before `connect()`; `getsockopt` reads it back.
-- `level`: ANONYMOUS=0, IDENTIFICATION=1, IMPERSONATION=2, DELEGATION=3. Default if never set = IMPERSONATION.
-- Errno: `-EISCONN` once connected; `-EINVAL` bad level or optlen < 4; `-EOPNOTSUPP` datagram / non-Unix.
+- `level`: ANONYMOUS=0, IDENTIFICATION=1, IMPERSONATION=2, DELEGATION=3. Default if never set = IMPERSONATION. May change at any time; bounds captures from then on.
+- Errno: `-EINVAL` bad level or optlen < 4; `-EOPNOTSUPP` non-Unix.
+
+### Per-message identity — `KACS_SO_PASS_TOKEN` (3) and `KACS_SCM_TOKEN` (cmsg type 1 at level `SOL_KACS`)
+- `KACS_SO_PEER_TOKEN` reads the connection's **conveyed-identity register**: connect-time capture first, then whatever `KACS_SCM_TOKEN` the reader's position last passed. Anchored to read position, not arrival.
+- `setsockopt(SOL_KACS, KACS_SO_PASS_TOKEN, &int, 4)` — sender-side: every send carries the sender's effective identity (derived at the socket's level) as a `KACS_SCM_TOKEN`. `peios_socket_set_pass_token()`.
+- Sending a `KACS_SCM_TOKEN` cmsg (data: one token fd) attaches that token explicitly. Gated as if impersonating it: fd needs `TOKEN_IMPERSONATE` (`-EACCES`), primary tokens are derived at the socket's level, and a gate result below the token's level is `-EPERM` (loud). One per message (`-EINVAL`).
+- Receiving: cmsg delivered (a new `QUERY|IMPERSONATE` fd) when control space was supplied and the read's identity differs from the register; `MSG_CTRUNC` if due but no room. Stream reads stop at identity boundaries. `SOCK_DGRAM`: no register, token delivered per datagram.
 
 ### 1020 `kacs_open` (§13.1, §11)
 `long kacs_open(int dirfd, const char *path, struct kacs_open_how *uhow, size_t howsize, u32 *status_out)`

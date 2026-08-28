@@ -26,6 +26,7 @@ use peios_uapi::{
 const SOL_KACS: c_long = 4096;
 const KACS_SO_PEER_TOKEN: c_long = 1;
 const KACS_SO_IMPERSONATION_LEVEL: c_long = 2;
+const KACS_SO_PASS_TOKEN: c_long = 3;
 
 use crate::abi::{cstr_bytes, try_extend};
 use crate::error::set_errno;
@@ -127,6 +128,23 @@ pub unsafe extern "C" fn peios_socket_set_impersonation_level(sock_fd: c_int, le
         SOL_KACS,
         KACS_SO_IMPERSONATION_LEVEL,
         core::ptr::addr_of!(level) as usize as c_long,
+        core::mem::size_of::<u32>() as c_long,
+    ))
+}
+
+/// `peios_socket_set_pass_token` — sender-side automation: while on, every
+/// send from this socket carries the sender's effective identity as a
+/// `KACS_SCM_TOKEN`, derived at the socket's impersonation level
+/// (`setsockopt(SOL_KACS, KACS_SO_PASS_TOKEN)`). Returns 0, or -1 with errno.
+#[no_mangle]
+pub unsafe extern "C" fn peios_socket_set_pass_token(sock_fd: c_int, on: bool) -> c_int {
+    let val: u32 = if on { 1 } else { 0 };
+    ret_int(syscall5(
+        libc::SYS_setsockopt as u32,
+        sock_fd as c_long,
+        SOL_KACS,
+        KACS_SO_PASS_TOKEN,
+        core::ptr::addr_of!(val) as usize as c_long,
         core::mem::size_of::<u32>() as c_long,
     ))
 }
