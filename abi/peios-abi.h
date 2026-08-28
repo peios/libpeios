@@ -615,6 +615,8 @@ ptrdiff_t peios_sid_well_known(void *out, size_t cap, int which);
 
 int peios_socket_get_impersonation_level(int sock_fd, uint32_t *level);
 
+int peios_socket_restamp(int sock_fd);
+
 int peios_socket_set_impersonation_level(int sock_fd, uint32_t level);
 
 int peios_socket_set_pass_token(int sock_fd, bool on);

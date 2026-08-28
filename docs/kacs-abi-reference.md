@@ -75,6 +75,7 @@
 - `KACS_SO_PEER_TOKEN` reads the connection's **conveyed-identity register**: connect-time capture first, then whatever `KACS_SCM_TOKEN` the reader's position last passed. Anchored to read position, not arrival.
 - `setsockopt(SOL_KACS, KACS_SO_PASS_TOKEN, &int, 4)` — sender-side: every send carries the sender's effective identity (derived at the socket's level) as a `KACS_SCM_TOKEN`. `peios_socket_set_pass_token()`.
 - Sending a `KACS_SCM_TOKEN` cmsg (data: one token fd) attaches that token explicitly. Gated as if impersonating it: fd needs `TOKEN_IMPERSONATE` (`-EACCES`), primary tokens are derived at the socket's level, and a gate result below the token's level is `-EPERM` (loud). One per message (`-EINVAL`).
+- Symmetric capture: on `connect()` the **client's** register is initialised with the listener's identity as captured at `listen()` (Identification unless the listener set its own level). `setsockopt(SOL_KACS, KACS_SO_RESTAMP, &int, 4)` on a listening socket replaces that identity with the caller's own (self-gated; `-EINVAL` if not listening). `peios_socket_restamp()`.
 - Receiving: cmsg delivered (a new `QUERY|IMPERSONATE` fd) when control space was supplied and the read's identity differs from the register; `MSG_CTRUNC` if due but no room. Stream reads stop at identity boundaries. `SOCK_DGRAM`: no register, token delivered per datagram.
 
 ### 1020 `kacs_open` (§13.1, §11)

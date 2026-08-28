@@ -56,11 +56,14 @@ int peios_token_open_process(int pidfd, uint32_t access);
  * primary token. */
 int peios_token_open_thread(int pidfd, int tid, uint32_t access);
 
-/* The peer-identity token captured at connect() on a connected Unix
- * stream/seqpacket socket — getsockopt(SOL_KACS, KACS_SO_PEER_TOKEN). The
+/* The peer identity on a connected Unix stream/seqpacket socket —
+ * getsockopt(SOL_KACS, KACS_SO_PEER_TOKEN): the conveyed-identity register,
+ * which starts as the identity captured at connect() (on an accepted socket,
+ * the client's; on the connecting socket, the listener's, at Identification
+ * level by default) and follows each KACS_SCM_TOKEN the reader consumes. The
  * handle carries fixed QUERY | IMPERSONATE rights. ENOTCONN if the socket is
- * not connected; ENODATA if it carries no captured identity; EOPNOTSUPP on a
- * socket KACS captures no identity for (datagram, non-Unix). */
+ * not connected; ENODATA if nothing has been conveyed; EOPNOTSUPP on a socket
+ * KACS captures no identity for (datagram, non-Unix). */
 int peios_token_open_peer(int conn_fd);
 
 /* Impersonate the peer of @conn_fd on the calling thread: open the peer token,
@@ -88,6 +91,15 @@ int peios_socket_get_impersonation_level(int sock_fd, uint32_t *level);
  * impersonating at each send. Changes nothing about trust: a sender can
  * always attest to what it is. Returns 0, or -1 with errno. */
 int peios_socket_set_pass_token(int sock_fd, bool on);
+
+/* Replace a listening socket's conveyed identity with the caller's own
+ * effective identity (KACS_SO_RESTAMP). The identity a listener conveys to
+ * connecting clients — what a client's peios_token_open_peer returns right
+ * after connect() — is captured at listen(). A process that receives a
+ * listener it did not create (from the descriptor store after a restart, or
+ * from a broker) restamps it so clients see the process actually accepting.
+ * Self-gated. Returns 0, or -1 with errno; EINVAL if not listening. */
+int peios_socket_restamp(int sock_fd);
 
 /* Mint a token from a pre-built token-spec buffer (escape hatch; prefer the
  * builder below). Requires SeCreateTokenPrivilege. */

@@ -27,6 +27,7 @@ const SOL_KACS: c_long = 4096;
 const KACS_SO_PEER_TOKEN: c_long = 1;
 const KACS_SO_IMPERSONATION_LEVEL: c_long = 2;
 const KACS_SO_PASS_TOKEN: c_long = 3;
+const KACS_SO_RESTAMP: c_long = 4;
 
 use crate::abi::{cstr_bytes, try_extend};
 use crate::error::set_errno;
@@ -144,6 +145,27 @@ pub unsafe extern "C" fn peios_socket_set_pass_token(sock_fd: c_int, on: bool) -
         sock_fd as c_long,
         SOL_KACS,
         KACS_SO_PASS_TOKEN,
+        core::ptr::addr_of!(val) as usize as c_long,
+        core::mem::size_of::<u32>() as c_long,
+    ))
+}
+
+/// `peios_socket_restamp` — replace a listening socket's conveyed identity
+/// with the caller's own effective identity (`setsockopt(SOL_KACS,
+/// KACS_SO_RESTAMP)`). The identity a listener conveys to connecting clients
+/// is captured when `listen()` is called; a process that receives a listener
+/// it did not create — from the descriptor store after a restart, or from a
+/// broker — restamps it so clients see the process actually accepting.
+/// Self-gated: a process can always attest to what it is. Returns 0, or -1
+/// with errno (EINVAL if the socket is not listening).
+#[no_mangle]
+pub unsafe extern "C" fn peios_socket_restamp(sock_fd: c_int) -> c_int {
+    let val: u32 = 1;
+    ret_int(syscall5(
+        libc::SYS_setsockopt as u32,
+        sock_fd as c_long,
+        SOL_KACS,
+        KACS_SO_RESTAMP,
         core::ptr::addr_of!(val) as usize as c_long,
         core::mem::size_of::<u32>() as c_long,
     ))
