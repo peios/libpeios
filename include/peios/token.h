@@ -101,6 +101,46 @@ int peios_socket_set_pass_token(int sock_fd, bool on);
  * Self-gated. Returns 0, or -1 with errno; EINVAL if not listening. */
 int peios_socket_restamp(int sock_fd);
 
+/* ---- per-message identity and descriptors ----------------------------- */
+
+/* What one received message carried alongside its bytes. @fds/@fd_cap are
+ * inputs (a caller-owned array; NULL with fd_cap 0 to accept none);
+ * @token_fd, @fd_count and @flags are outputs. */
+struct peios_socket_message {
+	int	 token_fd;	/* out: attached token (QUERY|IMPERSONATE|DUPLICATE, O_CLOEXEC), or -1 */
+	int	*fds;		/* in: SCM_RIGHTS descriptors land here, each O_CLOEXEC */
+	unsigned fd_cap;	/* in: capacity of @fds */
+	unsigned fd_count;	/* out: how many were filled */
+	unsigned flags;		/* out: PEIOS_SOCKET_MSG_* */
+};
+#define PEIOS_SOCKET_MSG_TRUNCATED	0x1u	/* data did not fit (MSG_TRUNC) */
+#define PEIOS_SOCKET_MSG_CTRUNCATED	0x2u	/* ancillary data did not fit (MSG_CTRUNC) */
+
+/* Send @len bytes from @buf on @sock_fd, attaching @token_fd as a
+ * KACS_SCM_TOKEN when it is >= 0 and @fds[0..@fd_count] as SCM_RIGHTS when
+ * @fd_count > 0; @flags are sendmsg(2) flags. The kernel gates the token
+ * attach exactly as it gates impersonating it (EACCES without
+ * TOKEN_IMPERSONATE; EPERM if attaching would lower the token's level). The
+ * caller keeps its descriptors. Returns the bytes sent, or -1 with errno. */
+ssize_t peios_socket_send_message(int sock_fd, const void *buf, size_t len,
+				  int token_fd, const int *fds, unsigned fd_count,
+				  int flags);
+
+/* Receive one message into @buf/@cap with room for one attached token and
+ * @msg->fd_cap descriptors; MSG_CMSG_CLOEXEC is always added to @flags.
+ * Every descriptor the kernel delivered is either in *@msg or already
+ * closed — a second token or a descriptor past @fd_cap never leaks. On -1
+ * nothing was consumed and *@msg is untouched. Returns the bytes received
+ * (0 at end of stream), or -1 with errno. */
+ssize_t peios_socket_recv_message(int sock_fd, void *buf, size_t cap,
+				  struct peios_socket_message *msg, int flags);
+
+/* A pidfd (O_CLOEXEC) for the process on the other end of a connected Unix
+ * socket — getsockopt(SOL_SOCKET, SO_PEERPIDFD). The kernel's handle on the
+ * peer, which is what peios_token_open_process() takes; never a PID the peer
+ * names. Returns the new fd, or -1 with errno. */
+int peios_socket_peer_pidfd(int sock_fd);
+
 /* Mint a token from a pre-built token-spec buffer (escape hatch; prefer the
  * builder below). Requires SeCreateTokenPrivilege. */
 int peios_token_create_raw(const void *spec, size_t len);
@@ -240,6 +280,7 @@ ssize_t peios_token_user(int fd, void *sid_buf, size_t cap);		/* CLASS_USER */
 /* Typed convenience over peios_token_query() for the common scalar classes.
  * Output pointers are mandatory and must be non-NULL. */
 int	peios_token_type(int fd, uint32_t *out);			/* CLASS_TYPE */
+int	peios_token_impersonation_level(int fd, uint32_t *out);	/* CLASS_IMPERSONATION_LEVEL: the ceiling on every token, primary included */
 int	peios_token_interactivity_scope(int fd, uint32_t *out);	/* CLASS_INTERACTIVITY_SCOPE */
 int	peios_token_statistics(int fd, struct peios_token_statistics *out);	/* CLASS_STATISTICS */
 int	peios_token_integrity(int fd, uint32_t *level_rid_out);		/* CLASS_INTEGRITY_LEVEL */

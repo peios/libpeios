@@ -12,7 +12,8 @@ use core::ffi::{c_int, c_ulong, c_void};
 
 use peios_uapi::{
     kacs_query_args, KACS_IOC_QUERY, KACS_TOKEN_CLASS_INTEGRITY_LEVEL, KACS_TOKEN_CLASS_PRIVILEGES,
-    KACS_TOKEN_CLASS_SESSION_ID, KACS_TOKEN_CLASS_STATISTICS, KACS_TOKEN_CLASS_TYPE,
+    KACS_TOKEN_CLASS_IMPERSONATION_LEVEL, KACS_TOKEN_CLASS_SESSION_ID, KACS_TOKEN_CLASS_STATISTICS,
+    KACS_TOKEN_CLASS_TYPE,
     KACS_TOKEN_CLASS_USER,
 };
 
@@ -115,6 +116,14 @@ pub unsafe extern "C" fn peios_token_user(fd: c_int, sid_buf: *mut c_void, cap: 
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_type(fd: c_int, out: *mut u32) -> c_int {
     query_into(fd, KACS_TOKEN_CLASS_TYPE, out)
+}
+
+/// `peios_token_impersonation_level` — the token's impersonation level
+/// (`KACS_TOKEN_CLASS_IMPERSONATION_LEVEL`): the ceiling on what may be
+/// derived from it, on a primary token as much as an impersonation one.
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_impersonation_level(fd: c_int, out: *mut u32) -> c_int {
+    query_into(fd, KACS_TOKEN_CLASS_IMPERSONATION_LEVEL, out)
 }
 
 /// `peios_token_interactivity_scope` — the interactive environment scope

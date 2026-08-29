@@ -10,6 +10,7 @@
 
 pub mod actions;
 pub mod builder;
+pub mod message;
 pub mod ops;
 pub mod query;
 

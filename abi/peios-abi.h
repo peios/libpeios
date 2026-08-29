@@ -172,6 +172,14 @@ struct peios_sid_array_view {
   uint64_t _opaque[4];
 };
 
+struct peios_socket_message {
+  int token_fd;
+  int *fds;
+  unsigned int fd_cap;
+  unsigned int fd_count;
+  unsigned int flags;
+};
+
 struct peios_token_claim_value {
   uint64_t scalar;
   const void *bytes;
@@ -615,7 +623,23 @@ ptrdiff_t peios_sid_well_known(void *out, size_t cap, int which);
 
 int peios_socket_get_impersonation_level(int sock_fd, uint32_t *level);
 
+int peios_socket_peer_pidfd(int sock_fd);
+
+ptrdiff_t peios_socket_recv_message(int sock_fd,
+                                    void *buf,
+                                    size_t cap,
+                                    struct peios_socket_message *msg,
+                                    int flags);
+
 int peios_socket_restamp(int sock_fd);
+
+ptrdiff_t peios_socket_send_message(int sock_fd,
+                                    const void *buf,
+                                    size_t len,
+                                    int token_fd,
+                                    const int *fds,
+                                    unsigned int fd_count,
+                                    int flags);
 
 int peios_socket_set_impersonation_level(int sock_fd, uint32_t level);
 
@@ -724,6 +748,8 @@ int peios_token_get_linked(int fd);
 int peios_token_impersonate(int fd);
 
 int peios_token_impersonate_peer(int conn_fd);
+
+int peios_token_impersonation_level(int fd, uint32_t *out);
 
 int peios_token_install(int fd);
 
