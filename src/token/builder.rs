@@ -411,7 +411,10 @@ pub unsafe extern "C" fn peios_token_builder_privileges(
     b.put_u64(OFF_PRIVS_ENABLED, enabled);
 }
 
-/// `peios_token_builder_type` — set token type + impersonation level.
+/// `peios_token_builder_type` — set token type + impersonation level. The
+/// level is a ceiling on everything derived from the token, primary tokens
+/// included; a primary below `KACS_IMLEVEL_IMPERSONATION` is refused by the
+/// kernel (Kernel TRM §3.5.1).
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_builder_type(
     b: *mut peios_token_builder,

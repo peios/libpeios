@@ -61,7 +61,7 @@ int peios_token_open_thread(int pidfd, int tid, uint32_t access);
  * which starts as the identity captured at connect() (on an accepted socket,
  * the client's; on the connecting socket, the listener's, at Identification
  * level by default) and follows each KACS_SCM_TOKEN the reader consumes. The
- * handle carries fixed QUERY | IMPERSONATE rights. ENOTCONN if the socket is
+ * handle carries fixed QUERY | IMPERSONATE | DUPLICATE rights. ENOTCONN if the socket is
  * not connected; ENODATA if nothing has been conveyed; EOPNOTSUPP on a socket
  * KACS captures no identity for (datagram, non-Unix). */
 int peios_token_open_peer(int conn_fd);
