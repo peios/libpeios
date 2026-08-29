@@ -222,7 +222,7 @@ Token GenericMapping: read=`TOKEN_QUERY|READ_CONTROL`=**0x00020008**; write=`ADJ
 
 Default token SD (§4.8): Owner = creator user SID; DACL: ALLOW token's own user SID {QUERY|ADJUST_PRIVS|ADJUST_GROUPS|ADJUST_DEFAULT}; ALLOW creator TOKEN_ALL_ACCESS; ALLOW SYSTEM (S-1-5-18) TOKEN_ALL_ACCESS. If creator SID == token user SID, the creator ACE is omitted and an OWNER RIGHTS (S-1-3-4) ACE is added suppressing owner-implicit WRITE_DAC (keeps READ_CONTROL).
 
-Privilege LUIDs (bit in u64): SeCreateToken=2, SeAssignPrimaryToken=3, SeLockMemory=4, SeIncreaseQuota=5, SeMachineAccount=6, **SeTcb=7**, **SeSecurity=8**, **SeTakeOwnership=9**, SeLoadDriver=10, SeBackup=17, SeRestore=18, SeDebug=20, **SeAudit=21**, SeChangeNotify=23, **SeImpersonate=29**, SeCreateGlobal=30, **SeRelabel=32**, SeCreateSymbolicLink=35, SeCreateJob(Peios)=62, SeBindPrivilegedPort(Peios)=63. Mask = `1<<bit`. Priv attrs: ENABLED=0x02, REMOVED=0x04, RESET_ALL_DEFAULTS=0x80000000.
+Privilege LUIDs (bit in u64): SeCreateToken=2, SeAssignPrimaryToken=3, SeLockMemory=4, SeIncreaseQuota=5, SeMachineAccount=6, **SeTcb=7**, **SeSecurity=8**, **SeTakeOwnership=9**, SeLoadDriver=10, SeBackup=17, SeRestore=18, SeDebug=20, **SeAudit=21**, SeChangeNotify=23, **SeImpersonate=29**, SeCreateGlobal=30, **SeRelabel=32**, SeCreateSymbolicLink=35, SeCreateJob(Peios)=62. (Bit 63 was SeBindPrivilegedPort, retired for port reservations.) Mask = `1<<bit`. Priv attrs: ENABLED=0x02, REMOVED=0x04, RESET_ALL_DEFAULTS=0x80000000.
 
 ---
 
