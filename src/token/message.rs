@@ -28,6 +28,13 @@ const KACS_SCM_TOKEN: c_int = 1;
 /// control buffer cannot be asked to describe more than the kernel delivers.
 const SCM_MAX_FD: c_uint = 253;
 
+/// Enough stack storage for one KACS token and the kernel's maximum
+/// `SCM_RIGHTS` payload. Receive callers choose a prefix of this array from
+/// their advertised descriptor capacity, so the common token-only path uses
+/// 24 bytes without touching the allocator.
+const RECEIVE_CONTROL_MAX: usize =
+    cmsg_space(size_of::<c_int>()) + cmsg_space(SCM_MAX_FD as usize * size_of::<c_int>());
+
 /// `PEIOS_SOCKET_MSG_TRUNCATED` — the data did not fit in the caller's buffer
 /// (`MSG_TRUNC`). On a `SOCK_SEQPACKET` socket the tail is gone.
 pub const PEIOS_SOCKET_MSG_TRUNCATED: c_uint = 0x1;
@@ -263,10 +270,13 @@ pub unsafe extern "C" fn peios_socket_recv_message(
         return -1;
     }
     let fd_cap = msg.fd_cap.min(SCM_MAX_FD) as usize;
-    let control_len =
-        cmsg_space(size_of::<c_int>()) + if fd_cap > 0 { cmsg_space(fd_cap * size_of::<c_int>()) } else { 0 };
-    let mut control: Vec<u8> = Vec::new();
-    control.resize(control_len, 0);
+    let control_len = cmsg_space(size_of::<c_int>())
+        + if fd_cap > 0 {
+            cmsg_space(fd_cap * size_of::<c_int>())
+        } else {
+            0
+        };
+    let mut control = [0_u8; RECEIVE_CONTROL_MAX];
     let mut iov = libc::iovec {
         iov_base: buf,
         iov_len: cap,
@@ -275,7 +285,7 @@ pub unsafe extern "C" fn peios_socket_recv_message(
     hdr.msg_iov = &mut iov;
     hdr.msg_iovlen = 1;
     hdr.msg_control = control.as_mut_ptr() as *mut c_void;
-    hdr.msg_controllen = control.len();
+    hdr.msg_controllen = control_len;
     let r = syscall3(
         libc::SYS_recvmsg as u32,
         sock_fd as c_long,
@@ -285,7 +295,7 @@ pub unsafe extern "C" fn peios_socket_recv_message(
     if r < 0 {
         return -1;
     }
-    let delivered = hdr.msg_controllen.min(control.len());
+    let delivered = hdr.msg_controllen.min(control_len);
     deliver_control(&control[..delivered], msg);
     msg.flags = 0;
     if hdr.msg_flags & libc::MSG_TRUNC != 0 {
