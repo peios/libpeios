@@ -183,6 +183,7 @@ const SID_ALIASES: &[(&str, WellKnownSid)] = &[
     ("SY", WellKnownSid::LocalSystem),
     ("LS", WellKnownSid::LocalService),
     ("NS", WellKnownSid::NetworkService),
+    ("SU", WellKnownSid::Service),
     ("BA", WellKnownSid::BuiltinAdministrators),
     ("BU", WellKnownSid::BuiltinUsers),
     ("LW", WellKnownSid::LowIl),

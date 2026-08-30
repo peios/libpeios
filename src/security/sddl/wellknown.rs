@@ -16,6 +16,8 @@ pub enum WellKnownSid {
     Null,
     /// `S-1-1-0` — World / Everyone.
     Everyone,
+    /// `S-1-5-6` — Service: any process running under a service logon.
+    Service,
     /// `S-1-5-7` — Anonymous logon.
     Anonymous,
     /// `S-1-5-11` — Authenticated Users.
@@ -53,6 +55,7 @@ impl WellKnownSid {
     const ALL: &'static [WellKnownSid] = &[
         WellKnownSid::Null,
         WellKnownSid::Everyone,
+        WellKnownSid::Service,
         WellKnownSid::Anonymous,
         WellKnownSid::AuthenticatedUsers,
         WellKnownSid::LocalSystem,
@@ -75,6 +78,7 @@ impl WellKnownSid {
         match self {
             WellKnownSid::Null => (0, &[0]),
             WellKnownSid::Everyone => (1, &[0]),
+            WellKnownSid::Service => (5, &[6]),
             WellKnownSid::Anonymous => (5, &[7]),
             WellKnownSid::AuthenticatedUsers => (5, &[11]),
             WellKnownSid::LocalSystem => (5, &[18]),
@@ -114,6 +118,7 @@ impl WellKnownSid {
         match self {
             WellKnownSid::Null => "Null",
             WellKnownSid::Everyone => "Everyone",
+            WellKnownSid::Service => "Service",
             WellKnownSid::Anonymous => "Anonymous",
             WellKnownSid::AuthenticatedUsers => "Authenticated Users",
             WellKnownSid::LocalSystem => "LocalSystem",
@@ -153,6 +158,14 @@ mod tests {
             Some(WellKnownSid::LocalSystem)
         );
         assert!(WellKnownSid::LocalSystem.matches(&sid));
+    }
+
+    #[test]
+    fn service_roundtrips() {
+        let sid = WellKnownSid::Service.to_sid();
+        assert_eq!(sid.to_string(), "S-1-5-6");
+        assert_eq!(WellKnownSid::from_sid(&sid), Some(WellKnownSid::Service));
+        assert!(WellKnownSid::Service.matches(&sid));
     }
 
     #[test]

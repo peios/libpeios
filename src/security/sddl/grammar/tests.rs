@@ -468,6 +468,16 @@ fn parse_sid_alias_is_case_insensitive() {
     );
 }
 
+/// `SU` is the Service identity (`S-1-5-6`) — the group stapled onto every
+/// token minted for a service logon, and therefore the grantee any
+/// service-reachable socket names. Without the alias a descriptor has to spell
+/// the literal SID, which is what made the notify-socket descriptor unreadable.
+#[test]
+fn parse_sid_accepts_the_service_alias() {
+    assert_eq!(parse_sid("SU").unwrap(), WellKnownSid::Service.to_sid());
+    assert_eq!(parse_sid("SU").unwrap().to_string(), "S-1-5-6");
+}
+
 #[test]
 fn parse_sid_trims_whitespace() {
     assert_eq!(
