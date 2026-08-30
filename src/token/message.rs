@@ -11,7 +11,7 @@
 //! live under Provium; the control-buffer layout is unit-tested here.
 
 use core::ffi::{c_int, c_long, c_uint, c_void};
-use core::mem::size_of;
+use core::mem::{size_of, MaybeUninit};
 
 use alloc::vec::Vec;
 
@@ -106,7 +106,12 @@ fn push_cmsg(buf: &mut Vec<u8>, level: c_int, kind: c_int, data: &[u8]) {
 fn build_send_control(token_fd: c_int, fds: &[c_int]) -> Vec<u8> {
     let mut control = Vec::new();
     if token_fd >= 0 {
-        push_cmsg(&mut control, SOL_KACS, KACS_SCM_TOKEN, &token_fd.to_ne_bytes());
+        push_cmsg(
+            &mut control,
+            SOL_KACS,
+            KACS_SCM_TOKEN,
+            &token_fd.to_ne_bytes(),
+        );
     }
     if !fds.is_empty() {
         let mut data = Vec::with_capacity(fds.len() * size_of::<c_int>());
@@ -144,9 +149,17 @@ fn parse_control(buf: &[u8]) -> impl Iterator<Item = ParsedCmsg<'_>> {
         }
         let data_at = offset + cmsg_align(header_len);
         let data_end = offset + cmsg_len;
-        let data = if data_at <= data_end { &buf[data_at..data_end] } else { &[][..] };
+        let data = if data_at <= data_end {
+            &buf[data_at..data_end]
+        } else {
+            &[][..]
+        };
         offset += cmsg_align(cmsg_len);
-        Some(ParsedCmsg { level: header.cmsg_level, kind: header.cmsg_type, data })
+        Some(ParsedCmsg {
+            level: header.cmsg_level,
+            kind: header.cmsg_type,
+            data,
+        })
     })
 }
 
@@ -276,7 +289,14 @@ pub unsafe extern "C" fn peios_socket_recv_message(
         } else {
             0
         };
-    let mut control = [0_u8; RECEIVE_CONTROL_MAX];
+    let mut control = [MaybeUninit::<u8>::uninit(); RECEIVE_CONTROL_MAX];
+    // `recvmsg` writes the control messages but may leave alignment padding
+    // untouched. Initialise only the advertised prefix so parsing that
+    // padding is defined without clearing the maximum 1 KiB buffer for a
+    // token-only receive.
+    // SAFETY: `control_len` is bounded by the array and this writes bytes into
+    // uninitialised storage without reading them.
+    unsafe { core::ptr::write_bytes(control.as_mut_ptr().cast::<u8>(), 0, control_len) };
     let mut iov = libc::iovec {
         iov_base: buf,
         iov_len: cap,
@@ -296,7 +316,11 @@ pub unsafe extern "C" fn peios_socket_recv_message(
         return -1;
     }
     let delivered = hdr.msg_controllen.min(control_len);
-    deliver_control(&control[..delivered], msg);
+    // SAFETY: the advertised prefix was initialised above and `delivered` is
+    // capped to that prefix.
+    let delivered_control =
+        unsafe { core::slice::from_raw_parts(control.as_ptr().cast::<u8>(), delivered) };
+    deliver_control(delivered_control, msg);
     msg.flags = 0;
     if hdr.msg_flags & libc::MSG_TRUNC != 0 {
         msg.flags |= PEIOS_SOCKET_MSG_TRUNCATED;
