@@ -157,7 +157,7 @@ Token fd = anon_inode `kacs-token`, O_CLOEXEC. Per-handle access mask gates each
 | 7 | ADJUST_GROUPS | _IOW | kacs_adjust_groups_args | TOKEN_ADJUST_GROUPS (0x0040) |
 | 8 | IMPERSONATE | _IO | — | TOKEN_IMPERSONATE (0x0004) |
 | 9 | ADJUST_DEFAULT | _IOW | kacs_adjust_default_args | TOKEN_ADJUST_DEFAULT (0x0080) |
-| 10 | ADJUST_SESSIONID | _IOW | u32 | TOKEN_ADJUST_SESSIONID (0x0100) + SeTcb |
+| 10 | ADJUST_INTERACTIVITY_SCOPE | _IOW | u32 | TOKEN_ADJUST_INTERACTIVITY_SCOPE (0x0100) + SeTcb |
 
 **QUERY** — `kacs_query_args` (16 B): `token_class:u32`(0), `buf_len:u32`(4; in=size, out=required/actual), `buf_ptr:u64`(8). **Two-call probe**: `buf_ptr==0 || buf_len==0` → write required size to `buf_len`, no payload, return 0. `buf_ptr!=0 && buf_len>0` but too small → write required size, no payload, return **`-ERANGE`**. Large enough → write payload + actual size, return 0. Payload range MUST NOT overlap the args struct → `-EINVAL`. Invalid class → `-EINVAL`.
 
@@ -210,13 +210,13 @@ Empty-result convention: optional SID/ACL → 0 bytes; optional SID array → `[
 
 **ADJUST_DEFAULT** — `kacs_adjust_default_args` (16 B): `dacl_ptr:u64` (3-way: 0/0=no change; ptr≠0,len>0=replace; ptr≠0,len=0=clear to null), `dacl_len:u32`(≤65536), `owner_index:u16`(0xFFFF=no change), `group_index:u16`(0xFFFF=no change). Affects future object creation only. Bumps `modified_id`.
 
-**ADJUST_SESSIONID** — arg = bare `u32`. Pure metadata. Requires TOKEN_ADJUST_SESSIONID + **SeTcb**. Bumps `modified_id`.
+**ADJUST_INTERACTIVITY_SCOPE** — arg = bare `u32`. Changes the interactive-environment scope without changing the token's LogonSession/auth_id. Requires TOKEN_ADJUST_INTERACTIVITY_SCOPE + **SeTcb**. Bumps `modified_id`.
 
 ---
 
 ## Part 3 — Token rights & privilege LUIDs
 
-Token handle rights: ASSIGN_PRIMARY=0x0001, DUPLICATE=0x0002, IMPERSONATE=0x0004, QUERY=0x0008, (reserved 0x0010), ADJUST_PRIVS=0x0020, ADJUST_GROUPS=0x0040, ADJUST_DEFAULT=0x0080, ADJUST_SESSIONID=0x0100. **TOKEN_ALL_ACCESS=0x000F01FF**.
+Token handle rights: ASSIGN_PRIMARY=0x0001, DUPLICATE=0x0002, IMPERSONATE=0x0004, QUERY=0x0008, QUERY_SOURCE=0x0010, ADJUST_PRIVS=0x0020, ADJUST_GROUPS=0x0040, ADJUST_DEFAULT=0x0080, ADJUST_INTERACTIVITY_SCOPE=0x0100. **TOKEN_ALL_ACCESS=0x000F01FF**.
 
 Token GenericMapping: read=`TOKEN_QUERY|READ_CONTROL`=**0x00020008**; write=`ADJUST_PRIVILEGES|ADJUST_GROUPS|ADJUST_DEFAULT|WRITE_DAC`=**0x000400E0**; execute=`TOKEN_IMPERSONATE`=**0x00000004**; all=**0x000F01FF**.
 

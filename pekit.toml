@@ -1,152 +1,202 @@
-# libpeios — Peios's userspace C ABI library: the versioned shared object, the
-# static archive, the public headers, and split debug info.
+# libpeios — Peios's stable userspace C ABI library.
 #
-# Self-describing source (like pkm): the build pipeline lives here and the package
-# definitions in packages.pekit/; pkgs/libpeios is a thin `delegate` pointer.
-#
-# Unlike glibc/kernel (C/Make, `make install DESTDIR=`), libpeios is a Rust cargo
-# crate — it builds libpeios.so (cdylib, soname libpeios.so.0, baked by build.rs)
-# and libpeios.a (staticlib) into target/release with NO install step. So
-# build.main stages a DESTDIR-style tree into $PEKIT_OUT by hand, and the
-# post-build debug split mirrors glibc's (debugedit -> objcopy -> strip,
-# build-id indexed), adapted for the single shared object.
-#
-# Build deps are declared below and checked by the build/test preflights: a Rust
-# toolchain (cargo, rustc), gcc for the final link, binutils (objcopy, strip,
-# readelf), debugedit, plus the ABI-verifier tools used by [test].
+# One Rust build is split into the runtime shared object, development files,
+# static archive, debug symbols, debug sources, and a generated source package.
+# Network access is confined to build.vendor; build.main and all tests consume
+# only the Cargo.lock-pinned vendor tree and the matching PKM UAPI snapshot.
 
 out_dir = "out"
 
-# Single library build -> DESTDIR tree in $PEKIT_OUT. Layout follows the peipkg
-# payload spec (PSD-009 §3.4): usrmerged, arch-specific files under
-# /usr/lib/<triplet>. The staged tree is carved by packages.pekit/ as:
-#   <triplet>/libpeios.so.0   runtime shared object (soname)  -> libpeios
-#   <triplet>/libpeios.so     dev link for -lpeios            -> libpeios-devel
-#   <triplet>/libpeios.a      static archive                  -> libpeios-static
-#   usr/include/**            public headers (peios.h + peios/*.h) -> libpeios-devel
-#   usr/lib/debug/**          split DWARF, build-id indexed    -> libpeios-debuginfo
-#   usr/src/debug/**          referenced Rust sources          -> libpeios-debugsource
-# The abi/ snapshot (a cbindgen verification artifact) and docs/ (dev markdown)
-# are deliberately NOT shipped.
+[source_package]
+name = "dev.peios.libpeios-source"
+
+[build.vendor]
+command = '''
+set -eu
+
+PKM_REV=b5519e6da3ecd4ce854c6299af6844f0a6ce05dd
+PKM_SHORT=$(printf %.7s "$PKM_REV")
+export CARGO_HOME=/tmp/cargo-libpeios-vendor
+mkdir -p "$CARGO_HOME" "$PEKIT_OUT"
+
+grep -F "pkm.git?rev=$PKM_REV#$PKM_REV" Cargo.lock >/dev/null
+cargo vendor --locked "$PEKIT_OUT/vendor" > "$PEKIT_OUT/cargo-config.toml"
+test -s "$PEKIT_OUT/cargo-config.toml"
+test -n "$(find "$PEKIT_OUT/vendor" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+
+# cargo vendor copies only the selected crates. libpeios's public C headers also
+# include <pkm/*.h>, which live beside those crates in the same locked PKM Git
+# checkout. Preserve that exact checkout's userspace UAPI as a build input.
+PKM_ROOT=
+for candidate in "$CARGO_HOME"/git/checkouts/pkm-*/*; do
+  [ -d "$candidate/uapi/pkm" ] || continue
+  [ "$(basename "$candidate")" = "$PKM_SHORT" ] || continue
+  [ -z "$PKM_ROOT" ] || { echo "multiple PKM checkouts match $PKM_REV" >&2; exit 1; }
+  PKM_ROOT=$candidate
+done
+test -n "$PKM_ROOT" || { echo "Cargo did not materialize locked PKM checkout $PKM_REV" >&2; exit 1; }
+cp -R "$PKM_ROOT/uapi" "$PEKIT_OUT/pkm-uapi"
+test -f "$PEKIT_OUT/pkm-uapi/pkm/pkm.h"
+'''
+
+[build.vendor.dependencies.peipkg]
+"org.git.kernel.dash" = "*"
+peiosutils             = "*"
+"org.gnu.findutils"   = "*"
+"org.gnu.grep"        = "*"
+"org.rust-lang.rust"  = ">= 1.98.1"
+
+[build.vendor.dependencies.apt]
+dash            = "*"
+coreutils       = "*"
+findutils       = "*"
+grep            = "*"
+cargo           = "*"
+rustc           = "*"
+ca-certificates = "*"
+
 [build.main]
-command = """
+needs = ["vendor"]
+command = '''
 set -eu
 set -o pipefail 2>/dev/null || true
 
-SRC="$(pwd)"
-for tool in cargo rustc gcc objcopy strip readelf debugedit; do
-  command -v "$tool" >/dev/null || { echo "missing required libpeios build tool: $tool" >&2; exit 1; }
-done
-
+SRC=$(pwd -P)
 TRIPLET=x86_64-linux-peios
-LIBDIR="usr/lib/$TRIPLET"
+LIBDIR=usr/lib/$TRIPLET
+DEBUG_PREFIX=/usr/src/debug/dev.peios.libpeios
+DEBUG_ROOT=$PEKIT_OUT$DEBUG_PREFIX
+PKM_UAPI=$PEKIT_VENDOR_OUT/pkm-uapi
+export CARGO_HOME=$PEKIT_OUT/cargo-home
+mkdir -p "$CARGO_HOME"
+cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
 
-# Build the release profile (panic=abort, set in Cargo.toml) with full DWARF
-# embedded in the .so. Debuginfo is added via env override so Cargo.toml stays
-# untouched and a plain `cargo build --release` for dev stays debug-free.
-# split-debuginfo=off keeps the DWARF INSIDE the .so so objcopy/strip can split
-# it the same way glibc splits its ELF binaries.
+VERSION=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+test "$VERSION" = "$PEKIT_VERSION"
+test -f "$PKM_UAPI/pkm/pkm.h"
+
+# Keep all source references independent of checkout and build-root paths.
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$PEKIT_WORKSPACE_ROOT=$DEBUG_PREFIX/.workspace --remap-path-prefix=$PEKIT_OUT_BASE=$DEBUG_PREFIX/.build --remap-path-prefix=$PEKIT_VENDOR_OUT/vendor=$DEBUG_PREFIX/vendor --remap-path-prefix=$SRC=$DEBUG_PREFIX"
+
+# Tests and the release outputs use only the locked vendor tree.
+cargo test --release --locked --offline --target-dir "$PEKIT_OUT/target"
 CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
-  cargo build --release --locked
+  cargo build --release --locked --offline --target-dir "$PEKIT_OUT/target"
 
-# Stage the DESTDIR tree.
+# The checked C snapshot must match Rust, the hand-written public headers must
+# match that snapshot, and the built DSO must export exactly the checked API.
+PKM_UAPI="$PKM_UAPI" PEIOS_LIBRARY="$PEKIT_OUT/target/release/libpeios.so" \
+  PEIOS_VERIFY_SNAPSHOT=auto \
+  ./tools/verify-abi.sh
+
 mkdir -p "$PEKIT_OUT/$LIBDIR" "$PEKIT_OUT/usr/include/peios"
-# The runtime .so is installed under its soname (libpeios.so.0, baked by
-# build.rs); the unversioned dev link points at it (libpeios-devel claims *.so,
-# libpeios claims *.so.* — the same split glibc uses).
-cp target/release/libpeios.so "$PEKIT_OUT/$LIBDIR/libpeios.so.0"
+cp "$PEKIT_OUT/target/release/libpeios.so" "$PEKIT_OUT/$LIBDIR/libpeios.so.0"
 ln -s libpeios.so.0 "$PEKIT_OUT/$LIBDIR/libpeios.so"
-cp target/release/libpeios.a "$PEKIT_OUT/$LIBDIR/libpeios.a"
-# Public headers — the shipping API (hand-written, with prose docs).
+cp "$PEKIT_OUT/target/release/libpeios.a" "$PEKIT_OUT/$LIBDIR/libpeios.a"
 cp include/peios.h "$PEKIT_OUT/usr/include/"
 cp include/peios/*.h "$PEKIT_OUT/usr/include/peios/"
 
-# pkg-config descriptor, so downstream builds (peios-sys, and any future C/Go
-# consumer) resolve libpeios via `pkg-config peios` instead of the
-# PEIOS_INCLUDE/PEIOS_LIB_DIR env overrides. The pkm UAPI headers <pkm/*.h> that
-# the peios headers reference live under the same /usr/include (shipped by
-# kernel-headers), so one -I${includedir} covers both peios/ and pkm/.
-PCVER="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/^version = "([^"]+)".*/\\1/')"
 mkdir -p "$PEKIT_OUT/$LIBDIR/pkgconfig"
-sed -e "s|@prefix@|/usr|g" \
+sed -e 's|@prefix@|/usr|g' \
     -e "s|@libdir@|/$LIBDIR|g" \
-    -e "s|@version@|$PCVER|g" \
+    -e "s|@version@|$VERSION|g" \
     peios.pc.in > "$PEKIT_OUT/$LIBDIR/pkgconfig/peios.pc"
 
-# --- Debug split (mirrors glibc's post-install handling) ----------------------
-# debugedit rewrites the builder's source prefix ($SRC) in the DWARF to a stable
-# /usr/src/debug/libpeios (otherwise the .debug leaks the builder's homedir and
-# source paths don't resolve on a target) and lists the sources it references;
-# -n keeps the linker's build-id note intact so the .build-id index stays valid.
-# objcopy then splits the clean DWARF into a build-id-indexed .debug and strip
-# removes it from the shipped .so. The static archive just loses its DWARF
-# (--strip-debug keeps the symtab so it still links; archive members have no
-# build-id to index, like Fedora's brp-strip-static-archive).
-so="$PEKIT_OUT/$LIBDIR/libpeios.so.0"
-debugedit -b "$SRC" -d /usr/src/debug/libpeios -l "$PEKIT_OUT/.srclist" -n "$so"
-bid=$(readelf -n "$so" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)
-if [ -n "$bid" ]; then
-  p2=$(printf %s "$bid" | cut -c1-2)
-  rest=$(printf %s "$bid" | cut -c3-)
-  mkdir -p "$PEKIT_OUT/usr/lib/debug/.build-id/$p2"
-  objcopy --only-keep-debug "$so" "$PEKIT_OUT/usr/lib/debug/.build-id/$p2/$rest.debug"
-  chmod 0644 "$PEKIT_OUT/usr/lib/debug/.build-id/$p2/$rest.debug"
-fi
-strip "$so"
-strip --strip-debug "$PEKIT_OUT/$LIBDIR/libpeios.a" 2>/dev/null || true
+# Prove the staged development surface works for both supported link modes.
+PC=$PEKIT_OUT/$LIBDIR/pkgconfig/peios.pc
+test "$(PKG_CONFIG_LIBDIR=$(dirname "$PC") pkg-config --modversion peios)" = "$VERSION"
+PKG_CONFIG_LIBDIR=$(dirname "$PC") pkg-config --libs --static peios | grep -q -- '-lm'
+gcc -I "$PEKIT_OUT/usr/include" -I "$PKM_UAPI" tools/package-smoke.c \
+  -L "$PEKIT_OUT/$LIBDIR" -Wl,-rpath-link,"$PEKIT_OUT/$LIBDIR" -lpeios \
+  -o "$PEKIT_OUT/smoke-dynamic"
+LD_LIBRARY_PATH="$PEKIT_OUT/$LIBDIR" "$PEKIT_OUT/smoke-dynamic"
+gcc -I "$PEKIT_OUT/usr/include" -I "$PKM_UAPI" tools/package-smoke.c \
+  "$PEKIT_OUT/$LIBDIR/libpeios.a" -lm -lrt -lpthread \
+  -o "$PEKIT_OUT/smoke-static"
+"$PEKIT_OUT/smoke-static"
+rm -f "$PEKIT_OUT/smoke-dynamic" "$PEKIT_OUT/smoke-static"
 
-# Stage the referenced sources under /usr/src/debug/libpeios. The list is
-# relative to $SRC (the debugedit -b base), so only libpeios's own sources
-# resolve — std / cargo-registry / toolchain paths fall outside $SRC and are
-# skipped, exactly as glibc ships only glibc sources.
-tr '\\0' '\\n' < "$PEKIT_OUT/.srclist" | sort -u | while IFS= read -r rel; do
+# Split DWARF from the runtime DSO. The static archive keeps its symbol table
+# but not its embedded debug sections.
+SO=$PEKIT_OUT/$LIBDIR/libpeios.so.0
+LIST=$PEKIT_OUT/.debug-sources
+debugedit -b "$SRC" -d "$DEBUG_PREFIX" -l "$LIST" -n "$SO"
+BUILD_ID=$(readelf -n "$SO" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)
+test -n "$BUILD_ID"
+FIRST=$(printf %s "$BUILD_ID" | cut -c1-2)
+REST=$(printf %s "$BUILD_ID" | cut -c3-)
+DEBUG=$PEKIT_OUT/usr/lib/debug/.build-id/$FIRST/$REST.debug
+mkdir -p "$(dirname "$DEBUG")"
+objcopy --only-keep-debug "$SO" "$DEBUG"
+strip --strip-unneeded "$SO"
+objcopy --add-gnu-debuglink="$DEBUG" "$SO"
+strip --strip-debug "$PEKIT_OUT/$LIBDIR/libpeios.a"
+
+mkdir -p "$DEBUG_ROOT"
+tr '\0' '\n' < "$LIST" | LC_ALL=C sort -u | while IFS= read -r rel; do
   [ -n "$rel" ] || continue
-  case "$rel" in */) continue;; esac
-  [ -f "$SRC/$rel" ] || continue
-  mkdir -p "$PEKIT_OUT/usr/src/debug/libpeios/$(dirname "$rel")"
-  cp "$SRC/$rel" "$PEKIT_OUT/usr/src/debug/libpeios/$rel"
+  case "$rel" in */) continue ;; esac
+  case "$rel" in
+    vendor/*) ORIGIN=$PEKIT_VENDOR_OUT/$rel ;;
+    *)        ORIGIN=$SRC/$rel ;;
+  esac
+  [ -f "$ORIGIN" ] || continue
+  mkdir -p "$DEBUG_ROOT/$(dirname "$rel")"
+  cp "$ORIGIN" "$DEBUG_ROOT/$rel"
 done
-rm -f "$PEKIT_OUT/.srclist"
-"""
+rm -f "$LIST"
+test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 
-# Build deps. A cargo crate: the Rust toolchain (cargo + rustc) compiles the
-# cdylib/staticlib, gcc drives the final link, and the debug split uses binutils
-# (objcopy/strip/readelf) + debugedit. The [test] verifier also compiles headers
-# as C++ and regenerates the ABI snapshot, so g++ and cbindgen are declared here
-# too (pekit currently exposes dependencies on build targets only). The verifier
-# script enforces the exact cbindgen version needed for reproducible snapshots.
-# No external C libraries (the only C-ABI surface is the system libc, supplied by
-# the target).
+# ELF policy and reproducibility gates.
+readelf -h "$SO" | grep -Eq 'Type:[[:space:]]+DYN'
+readelf -dW "$SO" | grep -q 'SONAME.*\[libpeios.so.0\]'
+readelf -lW "$SO" | grep -q 'GNU_RELRO'
+readelf -lW "$SO" | grep -Eq 'GNU_STACK[[:space:]].*RW[[:space:]]'
+readelf -dW "$SO" | grep -q 'BIND_NOW'
+! readelf -dW "$SO" | grep -Eq '(RPATH|RUNPATH)'
+! readelf -SW "$SO" | grep -q '\.debug_info'
+! readelf -SW "$PEKIT_OUT/$LIBDIR/libpeios.a" | grep -q '\.debug_info'
+readelf -SW "$DEBUG" | grep -q '\.debug_info'
+test "$(readelf -n "$DEBUG" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)" = "$BUILD_ID"
+! grep -aFl "$SRC" "$SO" "$PEKIT_OUT/$LIBDIR/libpeios.a" "$DEBUG"
+! grep -aFl "$PEKIT_OUT_BASE" "$SO" "$PEKIT_OUT/$LIBDIR/libpeios.a" "$DEBUG"
+'''
+
 [build.main.dependencies.peipkg]
-cargo = "*"
-rust = "*"
-gcc = "*"
-"gcc-c++" = "*"
-cbindgen = "0.29.2"
-binutils = "*"
-debugedit = "*"
+"org.git.kernel.dash"      = "*"
+"org.gnu.bash"             = "*"
+peiosutils                  = "*"
+"org.gnu.findutils"        = "*"
+"org.gnu.gawk"             = "*"
+"org.gnu.grep"             = "*"
+"org.gnu.sed"              = "*"
+"org.gnu.diffutils"        = "*"
+"org.rust-lang.rust"       = ">= 1.98.1"
+"org.gnu.gcc-c++"          = ">= 16, < 17"
+"org.gnu.binutils"         = "*"
+"org.sourceware.debugedit" = "*"
+"org.mozilla.cbindgen"     = "= 0.29.2-1"
+"org.pkgconf.pkgconf"      = "*"
 
 [build.main.dependencies.apt]
-cargo = "*"
-rustc = "*"
-gcc = "*"
-"g++" = "*"
-cbindgen = "*"
-binutils = "*"
-debugedit = "*"
-
-[test]
-command = """
-set -eu
-set -o pipefail 2>/dev/null || true
-
-for tool in cargo rustc gcc g++ cbindgen; do
-  command -v "$tool" >/dev/null || { echo "missing required libpeios test tool: $tool" >&2; exit 1; }
-done
-
-cargo test --locked
-./tools/verify-abi.sh
-"""
+dash       = "*"
+bash       = "*"
+coreutils  = "*"
+findutils  = "*"
+gawk       = "*"
+grep       = "*"
+sed        = "*"
+diffutils  = "*"
+cargo      = "*"
+rustc      = "*"
+gcc        = "*"
+"g++"      = "*"
+binutils   = "*"
+debugedit  = "*"
+# Debian stable's generator is older. That rung verifies the committed ABI
+# snapshot; the Peios rung above requires and runs the exact 0.29.2 generator.
+cbindgen   = "*"
+pkgconf    = "*"
 
 [clean]
 command = "cargo clean"

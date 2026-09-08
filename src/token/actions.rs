@@ -15,9 +15,9 @@ use peios_uapi::{
     kacs_adjust_default_args, kacs_adjust_groups_args, kacs_adjust_privs_args, kacs_duplicate_args,
     kacs_get_linked_token_args, kacs_group_entry, kacs_link_tokens_args, kacs_priv_entry,
     kacs_restrict_args, KACS_IOC_ADJUST_DEFAULT, KACS_IOC_ADJUST_GROUPS, KACS_IOC_ADJUST_PRIVS,
-    KACS_IOC_ADJUST_SESSIONID, KACS_IOC_DUPLICATE, KACS_IOC_GET_LINKED_TOKEN, KACS_IOC_IMPERSONATE,
-    KACS_IOC_INSTALL, KACS_IOC_LINK_TOKENS, KACS_IOC_RESTRICT, KACS_PRIVILEGE_RESET_ALL_DEFAULTS,
-    KACS_TOKEN_GROUP_MASK_WORDS,
+    KACS_IOC_ADJUST_INTERACTIVITY_SCOPE, KACS_IOC_DUPLICATE, KACS_IOC_GET_LINKED_TOKEN,
+    KACS_IOC_IMPERSONATE, KACS_IOC_INSTALL, KACS_IOC_LINK_TOKENS, KACS_IOC_RESTRICT,
+    KACS_PRIVILEGE_RESET_ALL_DEFAULTS, KACS_TOKEN_GROUP_MASK_WORDS,
 };
 
 use crate::abi::try_extend;
@@ -277,17 +277,17 @@ pub unsafe extern "C" fn peios_token_impersonate(fd: c_int) -> c_int {
     0
 }
 
-/// `peios_token_link` — link an elevated + filtered pair on `session_id`.
+/// `peios_token_link` — link an elevated + filtered pair in a LogonSession.
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_link(
     elevated_fd: c_int,
     filtered_fd: c_int,
-    session_id: u64,
+    logon_session_id: u64,
 ) -> c_int {
     let mut args = kacs_link_tokens_args {
         elevated_fd,
         filtered_fd,
-        session_id,
+        logon_session_id,
     };
     // The kernel resolves both tokens from the args; issue on the elevated fd
     // (consistent with args.elevated_fd) to reach the token-fd ioctl handler.
@@ -336,16 +336,15 @@ pub unsafe extern "C" fn peios_token_adjust_default(
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_set_interactivity_scope(fd: c_int, scope: u32) -> c_int {
     let mut value = scope;
-    if ioc(fd, KACS_IOC_ADJUST_SESSIONID as c_ulong, &mut value) < 0 {
+    if ioc(
+        fd,
+        KACS_IOC_ADJUST_INTERACTIVITY_SCOPE as c_ulong,
+        &mut value,
+    ) < 0
+    {
         return -1;
     }
     0
-}
-
-/// Compatibility alias for the historical, ambiguous API name.
-#[no_mangle]
-pub unsafe extern "C" fn peios_token_set_session_id(fd: c_int, session_id: u32) -> c_int {
-    unsafe { peios_token_set_interactivity_scope(fd, session_id) }
 }
 
 #[cfg(test)]

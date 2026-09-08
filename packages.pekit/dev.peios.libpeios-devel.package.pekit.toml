@@ -1,0 +1,20 @@
+[package]
+name        = "dev.peios.libpeios-devel"
+description = "Peios userspace C ABI library development files"
+
+[provides]
+libpeios-devel = "{{version}}-1"
+
+[replaces]
+libpeios-devel = "<= 0.3.4-8"
+
+[dependencies]
+"dev.peios.libpeios" = "= {{version}}-1"
+# Public libpeios headers include the Peios kernel UAPI under <pkm/*.h>.
+kernel-headers = ">= 0.20.1-rc2"
+
+[files]
+"@source:LICENSE"                                = "usr/share/licenses/dev.peios.libpeios-devel/LICENSE"
+":usr/include/**"                                = "usr/include"
+":usr/lib/x86_64-linux-peios/libpeios.so"        = "usr/lib/x86_64-linux-peios/libpeios.so"
+":usr/lib/x86_64-linux-peios/pkgconfig/peios.pc" = "usr/lib/x86_64-linux-peios/pkgconfig/peios.pc"

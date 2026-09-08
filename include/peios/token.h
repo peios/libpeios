@@ -27,16 +27,6 @@
 
 #include <pkm/token.h>		/* pulls in <pkm/sd.h> */
 
-/* Source-compatibility for the pre-rename KACS UAPI consumed by older
- * libpeios releases. Both names identify the interactivity-scope surface; they
- * have never denoted the LogonSession LUID/auth_id. */
-#ifndef KACS_TOKEN_ADJUST_SESSIONID
-#define KACS_TOKEN_ADJUST_SESSIONID KACS_TOKEN_ADJUST_INTERACTIVITY_SCOPE
-#endif
-#ifndef KACS_TOKEN_CLASS_SESSION_ID
-#define KACS_TOKEN_CLASS_SESSION_ID KACS_TOKEN_CLASS_INTERACTIVITY_SCOPE
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -286,10 +276,6 @@ int	peios_token_statistics(int fd, struct peios_token_statistics *out);	/* CLASS
 int	peios_token_integrity(int fd, uint32_t *level_rid_out);		/* CLASS_INTEGRITY_LEVEL */
 int	peios_token_privileges(int fd, struct peios_privilege_set *out);	/* CLASS_PRIVILEGES */
 
-/* Compatibility alias: despite its historical name, this returns the u32
- * interactivity scope, not the u64 LogonSession LUID/auth_id. */
-int	peios_token_session_id(int fd, uint32_t *out);
-
 /* ====================================================================== */
 /* Adjust / transform                                                     */
 /* ====================================================================== */
@@ -335,8 +321,8 @@ int peios_token_impersonate(int fd);
  * impersonating. Returns 0, or -1 with errno. */
 int peios_token_revert(void);
 
-/* Link an elevated + filtered primary-token pair in @session_id [adv]. */
-int peios_token_link(int elevated_fd, int filtered_fd, uint64_t session_id);
+/* Link an elevated + filtered primary-token pair in @logon_session_id [adv]. */
+int peios_token_link(int elevated_fd, int filtered_fd, uint64_t logon_session_id);
 
 /* Open this token's linked token; returns a new fd [adv]. */
 int peios_token_get_linked(int fd);
@@ -350,9 +336,6 @@ int peios_token_adjust_default(int fd, const void *dacl, size_t len,
 /* Set the token's u32 interactive-environment scope [adv]
  * (SeTcbPrivilege). This does not change its LogonSession/auth_id. */
 int peios_token_set_interactivity_scope(int fd, uint32_t scope);
-
-/* Compatibility alias for peios_token_set_interactivity_scope(). */
-int peios_token_set_session_id(int fd, uint32_t session_id);
 
 /* ====================================================================== */
 /* Logon sessions                                                         */

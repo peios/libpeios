@@ -13,7 +13,9 @@
 #   3. compares every public *function signature* between the hand-written headers
 #      and the snapshot, using `gcc -aux-info` for compiler-canonical prototypes;
 #   4. compares every public *struct* on size, alignment, and field offsets;
-#   5. compares the *data symbols* (the generic-mapping tables).
+#   5. compares the *data symbols* (the generic-mapping tables); and
+#   6. when PEIOS_LIBRARY is set, proves that DSO exports exactly that checked
+#      function-and-data surface.
 #
 # Steps 3 and 5 ignore only ABI-irrelevant spellings: parameter names,
 # `struct`/`enum` tags (opaque typedef vs tag), `ptrdiff_t`≡`ssize_t` /
@@ -30,7 +32,19 @@ cd "$(dirname "$0")/.."  # libpeios crate root
 
 SNAPSHOT=abi/peios-abi.h
 REQUIRED_CBINDGEN_VERSION=0.29.2
-INC=(-I include -I ../pkm/uapi)
+if [[ -n "${PKM_UAPI:-}" ]]; then
+  : # Explicit production-build input.
+elif [[ -d ../pkm/uapi ]]; then
+  PKM_UAPI=../pkm/uapi
+elif [[ -d /usr/include/pkm ]]; then
+  PKM_UAPI=/usr/include
+else
+  echo "FAIL: PKM_UAPI is unset and no PKM userspace headers were found" >&2
+  exit 1
+fi
+[[ -f "$PKM_UAPI/pkm/pkm.h" ]] \
+  || { echo "FAIL: $PKM_UAPI does not contain pkm/pkm.h" >&2; exit 1; }
+INC=(-I include -I "$PKM_UAPI")
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -62,10 +76,30 @@ norm_fns() {
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
 # --- 1. snapshot is up to date with the Rust source ------------------------------
-run_cbindgen "$TMP/gen.h"
-diff -u "$SNAPSHOT" "$TMP/gen.h" \
-  || fail "$SNAPSHOT is stale — the Rust ABI changed. Regenerate it (see abi/README.md)."
-echo "ok 1/5: snapshot is up to date with the Rust source"
+# The Peios production rung packages the exact generator. Debian stable carries
+# an older cbindgen, so that portability rung may explicitly use "auto": it
+# still verifies all header and binary ABI properties against the committed
+# snapshot, while regeneration remains mandatory wherever 0.29.2 is available.
+case "${PEIOS_VERIFY_SNAPSHOT:-required}" in
+  required)
+    run_cbindgen "$TMP/gen.h"
+    diff -u "$SNAPSHOT" "$TMP/gen.h" \
+      || fail "$SNAPSHOT is stale — the Rust ABI changed. Regenerate it (see abi/README.md)."
+    echo "ok 1/5: snapshot is up to date with the Rust source"
+    ;;
+  auto)
+    if command -v cbindgen >/dev/null 2>&1 \
+       && [[ "$(cbindgen --version | awk '{print $2}')" == "$REQUIRED_CBINDGEN_VERSION" ]]; then
+      run_cbindgen "$TMP/gen.h"
+      diff -u "$SNAPSHOT" "$TMP/gen.h" \
+        || fail "$SNAPSHOT is stale — the Rust ABI changed. Regenerate it (see abi/README.md)."
+      echo "ok 1/5: snapshot is up to date with the Rust source"
+    else
+      echo "skip 1/5: exact cbindgen unavailable; verifying committed snapshot"
+    fi
+    ;;
+  *) fail "PEIOS_VERIFY_SNAPSHOT must be 'required' or 'auto'" ;;
+esac
 
 # Hand-written TU = the umbrella header (also checks the umbrella is complete).
 printf '#include <peios.h>\n'                   > "$TMP/hand.c"
@@ -144,5 +178,19 @@ diff "$TMP/hand.data" "$TMP/snap.data" \
   || fail "data-symbol mismatch ('<' hand-written, '>' Rust snapshot)"
 echo "ok 5/5: $(wc -l < "$TMP/hand.data") data symbol(s) match"
 
+if [[ -n "${PEIOS_LIBRARY:-}" ]]; then
+  [[ -f "$PEIOS_LIBRARY" ]] || fail "PEIOS_LIBRARY does not exist: $PEIOS_LIBRARY"
+  command -v nm >/dev/null 2>&1 || fail "nm not on PATH"
+  {
+    sed -n -E 's/.*[ *](peios_[a-z_]+) \(.*/\1/p' "$TMP/hand.fns"
+    sed -n -E 's/.* (peios_[a-z_]+) *;/\1/p' "$TMP/hand.data"
+  } | sort -u > "$TMP/expected.exports"
+  nm -D --defined-only --format=posix "$PEIOS_LIBRARY" \
+    | awk '{print $1}' | sort -u > "$TMP/actual.exports"
+  diff "$TMP/expected.exports" "$TMP/actual.exports" \
+    || fail "DSO export mismatch ('<' checked headers, '>' shared object)"
+  echo "ok 6/6: $(wc -l < "$TMP/actual.exports") DSO exports match the checked ABI"
+fi
+
 echo
-echo "ABI VERIFIED: the hand-written <peios/*.h> headers are ABI-identical to the Rust source."
+echo "ABI VERIFIED: Rust, the hand-written headers, and requested binary surface agree."

@@ -1,0 +1,16 @@
+[package]
+name        = "dev.peios.libpeios-static"
+description = "Peios userspace C ABI library static archive"
+
+[provides]
+libpeios-static = "{{version}}-1"
+
+[replaces]
+libpeios-static = "<= 0.3.4-8"
+
+[dependencies]
+"dev.peios.libpeios-devel" = "= {{version}}-1"
+
+[files]
+"@source:LICENSE"                        = "usr/share/licenses/dev.peios.libpeios-static/LICENSE"
+":usr/lib/x86_64-linux-peios/libpeios.a" = "usr/lib/x86_64-linux-peios/libpeios.a"

@@ -8,4 +8,5 @@ Description: Peios userspace C ABI library (libpeios)
 URL: https://github.com/peios/libpeios
 Version: @version@
 Libs: -L${libdir} -lpeios
+Libs.private: -lm -lrt -lpthread
 Cflags: -I${includedir}

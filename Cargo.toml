@@ -2,6 +2,7 @@
 name = "libpeios"
 version = "0.5.0"
 edition = "2021"
+rust-version = "1.85"
 license = "MIT"
 description = "Peios userspace C ABI library"
 
@@ -19,11 +20,11 @@ peios-cabi = { git = "https://github.com/peios/peios-cabi.git", rev = "ed2540d6b
 # Generated Rust mirror of the PKM kernel ABI (constants + #[repr(C)] structs) —
 # the Rust analog of `#include <pkm/*.h>`. no_std, definitions only. Pinned so the
 # struct layouts the access/token/registry args are checked against can't drift.
-peios-uapi = { git = "https://github.com/peios/pkm.git", rev = "a47c63854539fed12381307b3b3a74b6500fdf5c", default-features = false }
+peios-uapi = { git = "https://github.com/peios/pkm.git", rev = "b5519e6da3ecd4ce854c6299af6844f0a6ce05dd", default-features = false }
 # The shared "pkm-core": SID / SD / ACL / ACE parse + evaluate vocabulary, run
 # identically here and in the kernel. Default features = no_std + alloc (the
 # `kernel` feature is left off for the userspace build). Pinned to the same pkm rev.
-kacs-core = { git = "https://github.com/peios/pkm.git", rev = "a47c63854539fed12381307b3b3a74b6500fdf5c" }
+kacs-core = { git = "https://github.com/peios/pkm.git", rev = "b5519e6da3ecd4ce854c6299af6844f0a6ce05dd" }
 # Raw libc FFI for the `errno` constants the entry points report and the `abort`
 # in the panic handler. no_std.
 libc = { version = "0.2", default-features = false }

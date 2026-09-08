@@ -1,0 +1,17 @@
+[package]
+name         = "dev.peios.libpeios-debugsource"
+architecture = "noarch"
+description  = "Peios userspace C ABI library debug sources"
+
+[provides]
+libpeios-debugsource = "{{version}}-1"
+
+[replaces]
+libpeios-debugsource = "<= 0.3.4-8"
+
+[dependencies]
+"dev.peios.libpeios-debuginfo" = "= {{version}}-1"
+
+[files]
+"@source:LICENSE"       = "usr/share/licenses/dev.peios.libpeios-debugsource/LICENSE"
+":usr/src/debug/**"     = "usr/src/debug"

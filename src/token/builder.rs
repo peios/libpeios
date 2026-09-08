@@ -47,7 +47,7 @@ const OFF_PROJECTED_UID: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_PROJECTED_UID a
 const OFF_PROJECTED_GID: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_PROJECTED_GID as usize;
 const OFF_AUDIT_POLICY: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_AUDIT_POLICY as usize;
 const OFF_EXPIRATION: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_EXPIRATION as usize;
-const OFF_SESSION_ID: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_SESSION_ID as usize;
+const OFF_LOGON_SESSION_ID: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_LOGON_SESSION_ID as usize;
 const OFF_OWNER_SID_INDEX: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_OWNER_SID_INDEX as usize;
 const OFF_PRIMARY_GROUP_INDEX: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_PRIMARY_GROUP_INDEX as usize;
 const OFF_SOURCE_NAME: usize = peios_uapi::KACS_TOKEN_SPEC_OFF_SOURCE_NAME as usize;
@@ -439,12 +439,12 @@ pub unsafe extern "C" fn peios_token_builder_integrity(b: *mut peios_token_build
     }
 }
 
-/// `peios_token_builder_session` — set the session id.
+/// `peios_token_builder_session` — set the LogonSession id.
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_builder_session(b: *mut peios_token_builder, session_id: u64) {
     if let Some(b) = b.as_mut() {
         if b.error == 0 {
-            b.put_u64(OFF_SESSION_ID, session_id);
+            b.put_u64(OFF_LOGON_SESSION_ID, session_id);
         }
     }
 }
@@ -1144,7 +1144,7 @@ mod tests {
             assert_eq!(u32_at(&spec, OFF_VERSION), VERSION);
             assert_eq!(spec[OFF_TOKEN_TYPE], 1);
             assert_eq!(u32_at(&spec, OFF_INTEGRITY_RID), 8192);
-            assert_eq!(u64_at(&spec, OFF_SESSION_ID), 0x1234_5678_9abc);
+            assert_eq!(u64_at(&spec, OFF_LOGON_SESSION_ID), 0x1234_5678_9abc);
             assert_eq!(u64_at(&spec, OFF_PRIVS_PRESENT), 0xFF);
             assert_eq!(u64_at(&spec, OFF_PRIVS_ENABLED), 0x0F);
             assert_eq!(spec[OFF_WRITE_RESTRICTED], 1);

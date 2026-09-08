@@ -168,7 +168,7 @@ impl peios_acl_builder {
 
         // Patch in the encoded size; ACE sizes are u16 and 4-aligned.
         let size = ace.len();
-        if size > u16::MAX as usize || !size.is_multiple_of(4) {
+        if size > u16::MAX as usize || size % 4 != 0 {
             return Err(libc::EINVAL);
         }
         ace[2..4].copy_from_slice(&(size as u16).to_le_bytes());

@@ -1,0 +1,13 @@
+[package]
+name        = "dev.peios.libpeios"
+description = "Peios userspace C ABI library"
+
+[provides]
+libpeios = "{{version}}-1"
+
+[replaces]
+libpeios = "<= 0.3.4-8"
+
+[files]
+"@source:LICENSE"                           = "usr/share/licenses/dev.peios.libpeios/LICENSE"
+":usr/lib/x86_64-linux-peios/libpeios.so.0" = "usr/lib/x86_64-linux-peios/libpeios.so.0"

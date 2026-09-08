@@ -1,5 +1,13 @@
 # libpeios ABI snapshot & header verification
 
+## Compatibility baseline
+
+Version 0.5.0 is the first published, qualified libpeios ABI baseline. Earlier
+development versions made no compatibility promise and are not inputs to this
+baseline. Starting with 0.5.0, changes to the checked snapshot are deliberate
+release decisions: compatible additions retain `libpeios.so.0`, while an
+incompatible change requires a new SONAME.
+
 The **hand-written `include/peios/*.h` headers are the shipping API** — they carry
 the prose docs, the `@param` notes, and the layout commentary that a generated
 header can't. cbindgen is used here not to *generate* that API but to **verify** it:
@@ -43,7 +51,7 @@ cd libpeios
 If `cbindgen` is not installed locally, run either command under
 `nix-shell -p rust-cbindgen --run '...'`.
 
-It checks five things and exits non-zero on any mismatch:
+It checks five source-level things and exits non-zero on any mismatch:
 
 1. **Snapshot freshness** — regenerates and diffs against the committed
    `peios-abi.h`. A diff here means the Rust ABI changed but the snapshot wasn't
@@ -55,6 +63,22 @@ It checks five things and exits non-zero on any mismatch:
 4. **Struct layouts** — `sizeof`, `_Alignof`, and every public field offset,
    compared between the two header sets.
 5. **Data symbols** — the `extern` objects (the generic-mapping tables).
+
+Production builds also set `PEIOS_LIBRARY` to the freshly built shared object.
+That enables a sixth check: the DSO's defined dynamic symbols must be exactly the
+functions and data objects represented by the checked headers. This makes the
+0.5.0 snapshot both a header-consistency gate and the first recorded export
+surface for future compatibility comparisons.
+
+`PKM_UAPI` may name the include root containing `pkm/`. Production builds pass
+the Cargo.lock-pinned PKM checkout; local development falls back to the sibling
+`pkm/uapi` checkout and then to installed headers.
+
+The Peios build environment carries exact cbindgen 0.29.2 and therefore always
+regenerates the snapshot. The Debian portability rung may set
+`PEIOS_VERIFY_SNAPSHOT=auto` when its distribution cbindgen is older; it still
+runs checks 2–6 against the committed snapshot. This exception does not weaken
+the published Peios artifact's exact-generator gate.
 
 Steps 3 and 5 deliberately ignore differences that do **not** affect the ABI:
 parameter names, `struct`/`enum` tags (opaque typedef vs tag),

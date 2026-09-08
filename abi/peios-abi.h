@@ -757,7 +757,7 @@ int peios_token_integrity(int fd, uint32_t *level_rid_out);
 
 int peios_token_interactivity_scope(int fd, uint32_t *out);
 
-int peios_token_link(int elevated_fd, int filtered_fd, uint64_t session_id);
+int peios_token_link(int elevated_fd, int filtered_fd, uint64_t logon_session_id);
 
 int peios_token_open_peer(int conn_fd);
 
@@ -779,11 +779,7 @@ int peios_token_restrict(int fd, const struct peios_token_restrict *spec);
 
 int peios_token_revert(void);
 
-int peios_token_session_id(int fd, uint32_t *out);
-
 int peios_token_set_interactivity_scope(int fd, uint32_t scope);
-
-int peios_token_set_session_id(int fd, uint32_t session_id);
 
 int peios_token_statistics(int fd, struct peios_token_statistics *out);
 

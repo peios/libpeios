@@ -15,19 +15,11 @@ use core::ffi::{c_char, c_int, c_long, c_uint, c_void};
 use alloc::vec::Vec;
 
 use peios_uapi::{
-    KACS_SESSION_SPEC_MAX_BYTES, SYS_KACS_CREATE_SESSION, SYS_KACS_CREATE_TOKEN,
-    SYS_KACS_DESTROY_EMPTY_SESSION, SYS_KACS_OPEN_PROCESS_TOKEN, SYS_KACS_OPEN_SELF_TOKEN,
-    SYS_KACS_OPEN_THREAD_TOKEN, SYS_KACS_REVERT,
+    KACS_LOGON_SESSION_SPEC_MAX_BYTES, KACS_SO_IMPERSONATION_LEVEL, KACS_SO_PASS_TOKEN,
+    KACS_SO_PEER_TOKEN, KACS_SO_RESTAMP, SOL_KACS, SYS_KACS_CREATE_LOGON_SESSION,
+    SYS_KACS_CREATE_TOKEN, SYS_KACS_DESTROY_EMPTY_LOGON_SESSION, SYS_KACS_OPEN_PROCESS_TOKEN,
+    SYS_KACS_OPEN_SELF_TOKEN, SYS_KACS_OPEN_THREAD_TOKEN, SYS_KACS_REVERT,
 };
-
-// `<pkm/socket.h>` — the SOL_KACS socket-option level. Mirrored here until the
-// `peios-uapi` pin advances to a pkm revision that carries the header; swap in
-// `peios_uapi::{SOL_KACS, KACS_SO_PEER_TOKEN, KACS_SO_IMPERSONATION_LEVEL}` then.
-const SOL_KACS: c_long = 4096;
-const KACS_SO_PEER_TOKEN: c_long = 1;
-const KACS_SO_IMPERSONATION_LEVEL: c_long = 2;
-const KACS_SO_PASS_TOKEN: c_long = 3;
-const KACS_SO_RESTAMP: c_long = 4;
 
 use crate::abi::{cstr_bytes, try_extend};
 use crate::error::set_errno;
@@ -87,8 +79,8 @@ pub unsafe extern "C" fn peios_token_open_peer(conn_fd: c_int) -> c_int {
     let r = syscall5(
         libc::SYS_getsockopt as u32,
         conn_fd as c_long,
-        SOL_KACS,
-        KACS_SO_PEER_TOKEN,
+        SOL_KACS as c_long,
+        KACS_SO_PEER_TOKEN as c_long,
         core::ptr::addr_of_mut!(fd) as usize as c_long,
         core::ptr::addr_of_mut!(len) as usize as c_long,
     );
@@ -126,8 +118,8 @@ pub unsafe extern "C" fn peios_socket_set_impersonation_level(sock_fd: c_int, le
     ret_int(syscall5(
         libc::SYS_setsockopt as u32,
         sock_fd as c_long,
-        SOL_KACS,
-        KACS_SO_IMPERSONATION_LEVEL,
+        SOL_KACS as c_long,
+        KACS_SO_IMPERSONATION_LEVEL as c_long,
         core::ptr::addr_of!(level) as usize as c_long,
         core::mem::size_of::<u32>() as c_long,
     ))
@@ -143,8 +135,8 @@ pub unsafe extern "C" fn peios_socket_set_pass_token(sock_fd: c_int, on: bool) -
     ret_int(syscall5(
         libc::SYS_setsockopt as u32,
         sock_fd as c_long,
-        SOL_KACS,
-        KACS_SO_PASS_TOKEN,
+        SOL_KACS as c_long,
+        KACS_SO_PASS_TOKEN as c_long,
         core::ptr::addr_of!(val) as usize as c_long,
         core::mem::size_of::<u32>() as c_long,
     ))
@@ -164,8 +156,8 @@ pub unsafe extern "C" fn peios_socket_restamp(sock_fd: c_int) -> c_int {
     ret_int(syscall5(
         libc::SYS_setsockopt as u32,
         sock_fd as c_long,
-        SOL_KACS,
-        KACS_SO_RESTAMP,
+        SOL_KACS as c_long,
+        KACS_SO_RESTAMP as c_long,
         core::ptr::addr_of!(val) as usize as c_long,
         core::mem::size_of::<u32>() as c_long,
     ))
@@ -188,8 +180,8 @@ pub unsafe extern "C" fn peios_socket_get_impersonation_level(
     let r = syscall5(
         libc::SYS_getsockopt as u32,
         sock_fd as c_long,
-        SOL_KACS,
-        KACS_SO_IMPERSONATION_LEVEL,
+        SOL_KACS as c_long,
+        KACS_SO_IMPERSONATION_LEVEL as c_long,
         core::ptr::addr_of_mut!(val) as usize as c_long,
         core::ptr::addr_of_mut!(len) as usize as c_long,
     );
@@ -220,7 +212,7 @@ pub unsafe extern "C" fn peios_token_create_raw(spec: *const c_void, len: usize)
 #[no_mangle]
 pub unsafe extern "C" fn peios_session_destroy_empty(session_id: u64) -> c_int {
     ret_int(syscall1(
-        SYS_KACS_DESTROY_EMPTY_SESSION,
+        SYS_KACS_DESTROY_EMPTY_LOGON_SESSION,
         session_id as c_long,
     ))
 }
@@ -246,7 +238,7 @@ fn encode_session_spec(
         return Err(libc::EINVAL);
     }
     // 7 fixed bytes (u8 + u16 + u32) + the two variable sections.
-    if 7 + auth_pkg.len() + user_sid.len() > KACS_SESSION_SPEC_MAX_BYTES as usize {
+    if 7 + auth_pkg.len() + user_sid.len() > KACS_LOGON_SESSION_SPEC_MAX_BYTES as usize {
         return Err(libc::EINVAL);
     }
     let oom = |_| libc::ENOMEM;
@@ -278,7 +270,10 @@ pub unsafe extern "C" fn peios_session_create(
         set_errno(libc::EINVAL);
         return -1;
     }
-    let Some(auth_pkg) = cstr_bytes(spec.auth_package, KACS_SESSION_SPEC_MAX_BYTES as usize) else {
+    let Some(auth_pkg) = cstr_bytes(
+        spec.auth_package,
+        KACS_LOGON_SESSION_SPEC_MAX_BYTES as usize,
+    ) else {
         set_errno(libc::EINVAL);
         return -1;
     };
@@ -295,7 +290,7 @@ pub unsafe extern "C" fn peios_session_create(
         }
     };
     let r = syscall2(
-        SYS_KACS_CREATE_SESSION,
+        SYS_KACS_CREATE_LOGON_SESSION,
         buf.as_ptr() as usize as c_long,
         buf.len() as c_long,
     );
@@ -347,7 +342,7 @@ mod tests {
     #[test]
     fn session_spec_too_large_is_einval() {
         let user = sid(5, &[18]);
-        let big = vec![b'x'; KACS_SESSION_SPEC_MAX_BYTES as usize];
+        let big = vec![b'x'; KACS_LOGON_SESSION_SPEC_MAX_BYTES as usize];
         assert_eq!(encode_session_spec(2, &big, &user), Err(libc::EINVAL));
     }
 

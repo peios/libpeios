@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "kacs-core"
 version = "0.1.0"
-source = "git+https://github.com/peios/pkm.git?rev=a47c63854539fed12381307b3b3a74b6500fdf5c#a47c63854539fed12381307b3b3a74b6500fdf5c"
+source = "git+https://github.com/peios/pkm.git?rev=b5519e6da3ecd4ce854c6299af6844f0a6ce05dd#b5519e6da3ecd4ce854c6299af6844f0a6ce05dd"
 dependencies = [
  "peios-uapi",
 ]
@@ -37,4 +37,4 @@ dependencies = [
 [[package]]
 name = "peios-uapi"
 version = "0.1.0"
-source = "git+https://github.com/peios/pkm.git?rev=a47c63854539fed12381307b3b3a74b6500fdf5c#a47c63854539fed12381307b3b3a74b6500fdf5c"
+source = "git+https://github.com/peios/pkm.git?rev=b5519e6da3ecd4ce854c6299af6844f0a6ce05dd#b5519e6da3ecd4ce854c6299af6844f0a6ce05dd"
