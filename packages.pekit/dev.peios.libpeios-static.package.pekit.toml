@@ -2,11 +2,7 @@
 name        = "dev.peios.libpeios-static"
 description = "Peios userspace C ABI library static archive"
 
-[provides]
-libpeios-static = "{{version}}-1"
 
-[replaces]
-libpeios-static = "<= 0.3.4-8"
 
 [dependencies]
 "dev.peios.libpeios-devel" = "= {{version}}-1"

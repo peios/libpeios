@@ -2,11 +2,7 @@
 name        = "dev.peios.libpeios-debuginfo"
 description = "Peios userspace C ABI library debugging symbols"
 
-[provides]
-libpeios-debuginfo = "{{version}}-1"
 
-[replaces]
-libpeios-debuginfo = "<= 0.3.4-8"
 
 [dependencies]
 "dev.peios.libpeios" = "= {{version}}-1"

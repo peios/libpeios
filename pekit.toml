@@ -41,7 +41,7 @@ test -f "$PEKIT_OUT/pkm-uapi/pkm/pkm.h"
 
 [build.vendor.dependencies.peipkg]
 "org.git.kernel.dash" = "*"
-peiosutils             = "*"
+"dev.peios.peiosutils"             = "*"
 "org.gnu.findutils"   = "*"
 "org.gnu.grep"        = "*"
 "org.rust-lang.rust"  = ">= 1.98.1"
@@ -165,7 +165,7 @@ test "$(readelf -n "$DEBUG" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)" 
 [build.main.dependencies.peipkg]
 "org.git.kernel.dash"      = "*"
 "org.gnu.bash"             = "*"
-peiosutils                  = "*"
+"dev.peios.peiosutils"                  = "*"
 "org.gnu.findutils"        = "*"
 "org.gnu.gawk"             = "*"
 "org.gnu.grep"             = "*"

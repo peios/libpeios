@@ -1,7 +1,5 @@
 # Shared metadata for the qualified libpeios package family. Version 0.5.0-1 is
-# the first production ABI baseline; earlier unqualified packages were
-# development snapshots and are replaced explicitly by each corresponding
-# qualified package.
+# the first production ABI baseline.
 
 format = "peipkg"
 
