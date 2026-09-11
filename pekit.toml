@@ -78,8 +78,7 @@ test -f "$PKM_UAPI/pkm/pkm.h"
 # Keep all source references independent of checkout and build-root paths.
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$PEKIT_WORKSPACE_ROOT=$DEBUG_PREFIX/.workspace --remap-path-prefix=$PEKIT_OUT_BASE=$DEBUG_PREFIX/.build --remap-path-prefix=$PEKIT_VENDOR_OUT/vendor=$DEBUG_PREFIX/vendor --remap-path-prefix=$SRC=$DEBUG_PREFIX"
 
-# Tests and the release outputs use only the locked vendor tree.
-cargo test --release --locked --offline --target-dir "$PEKIT_OUT/target"
+# Release validation runs from the gated test target below.
 CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
   cargo build --release --locked --offline --target-dir "$PEKIT_OUT/target"
 
@@ -101,20 +100,6 @@ sed -e 's|@prefix@|/usr|g' \
     -e "s|@libdir@|/$LIBDIR|g" \
     -e "s|@version@|$VERSION|g" \
     peios.pc.in > "$PEKIT_OUT/$LIBDIR/pkgconfig/peios.pc"
-
-# Prove the staged development surface works for both supported link modes.
-PC=$PEKIT_OUT/$LIBDIR/pkgconfig/peios.pc
-test "$(PKG_CONFIG_LIBDIR=$(dirname "$PC") pkg-config --modversion peios)" = "$VERSION"
-PKG_CONFIG_LIBDIR=$(dirname "$PC") pkg-config --libs --static peios | grep -q -- '-lm'
-gcc -I "$PEKIT_OUT/usr/include" -I "$PKM_UAPI" tools/package-smoke.c \
-  -L "$PEKIT_OUT/$LIBDIR" -Wl,-rpath-link,"$PEKIT_OUT/$LIBDIR" -lpeios \
-  -o "$PEKIT_OUT/smoke-dynamic"
-LD_LIBRARY_PATH="$PEKIT_OUT/$LIBDIR" "$PEKIT_OUT/smoke-dynamic"
-gcc -I "$PEKIT_OUT/usr/include" -I "$PKM_UAPI" tools/package-smoke.c \
-  "$PEKIT_OUT/$LIBDIR/libpeios.a" -lm -lrt -lpthread \
-  -o "$PEKIT_OUT/smoke-static"
-"$PEKIT_OUT/smoke-static"
-rm -f "$PEKIT_OUT/smoke-dynamic" "$PEKIT_OUT/smoke-static"
 
 # Split DWARF from the runtime DSO. The static archive keeps its symbol table
 # but not its embedded debug sections.
@@ -147,6 +132,46 @@ done
 rm -f "$LIST"
 test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 
+'''
+
+[test]
+needs = ["vendor", "main"]
+gate = true
+command = '''
+set -eu
+set -o pipefail 2>/dev/null || true
+SRC=$(pwd -P)
+TRIPLET=x86_64-linux-peios
+LIBDIR=usr/lib/$TRIPLET
+PKM_UAPI=$PEKIT_VENDOR_OUT/pkm-uapi
+export CARGO_HOME=$PEKIT_OUT/cargo-home
+mkdir -p "$CARGO_HOME"
+cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$PEKIT_WORKSPACE_ROOT=/usr/src/debug/dev.peios.libpeios/.workspace --remap-path-prefix=$PEKIT_OUT_BASE=/usr/src/debug/dev.peios.libpeios/.build --remap-path-prefix=$PEKIT_VENDOR_OUT/vendor=/usr/src/debug/dev.peios.libpeios/vendor --remap-path-prefix=$SRC=/usr/src/debug/dev.peios.libpeios"
+cargo test --release --locked --offline --target-dir "$PEKIT_OUT/target"
+
+# The remaining checks exercise the exact staged package output.
+PEKIT_OUT="$PEKIT_MAIN_OUT"
+VERSION="$PEKIT_VERSION"
+# Prove the staged development surface works for both supported link modes.
+PC=$PEKIT_OUT/$LIBDIR/pkgconfig/peios.pc
+test "$(PKG_CONFIG_LIBDIR=$(dirname "$PC") pkg-config --modversion peios)" = "$VERSION"
+PKG_CONFIG_LIBDIR=$(dirname "$PC") pkg-config --libs --static peios | grep -q -- '-lm'
+gcc -I "$PEKIT_OUT/usr/include" -I "$PKM_UAPI" tools/package-smoke.c \
+  -L "$PEKIT_OUT/$LIBDIR" -Wl,-rpath-link,"$PEKIT_OUT/$LIBDIR" -lpeios \
+  -o "$PEKIT_OUT/smoke-dynamic"
+LD_LIBRARY_PATH="$PEKIT_OUT/$LIBDIR" "$PEKIT_OUT/smoke-dynamic"
+gcc -I "$PEKIT_OUT/usr/include" -I "$PKM_UAPI" tools/package-smoke.c \
+  "$PEKIT_OUT/$LIBDIR/libpeios.a" -lm -lrt -lpthread \
+  -o "$PEKIT_OUT/smoke-static"
+"$PEKIT_OUT/smoke-static"
+rm -f "$PEKIT_OUT/smoke-dynamic" "$PEKIT_OUT/smoke-static"
+
+SO=$PEKIT_OUT/$LIBDIR/libpeios.so.0
+BUILD_ID=$(readelf -n "$SO" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)
+FIRST=$(printf %s "$BUILD_ID" | cut -c1-2)
+REST=$(printf %s "$BUILD_ID" | cut -c3-)
+DEBUG=$PEKIT_OUT/usr/lib/debug/.build-id/$FIRST/$REST.debug
 # ELF policy and reproducibility gates.
 readelf -h "$SO" | grep -Eq 'Type:[[:space:]]+DYN'
 readelf -dW "$SO" | grep -q 'SONAME.*\[libpeios.so.0\]'
@@ -162,6 +187,41 @@ test "$(readelf -n "$DEBUG" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)" 
 ! grep -aFl "$PEKIT_OUT_BASE" "$SO" "$PEKIT_OUT/$LIBDIR/libpeios.a" "$DEBUG"
 '''
 
+[test.dependencies.peipkg]
+"org.git.kernel.dash"      = "*"
+"org.gnu.bash"             = "*"
+"dev.peios.peiosutils"                  = "*"
+"org.gnu.findutils"        = "*"
+"org.gnu.gawk"             = "*"
+"org.gnu.grep"             = "*"
+"org.gnu.sed"              = "*"
+"org.gnu.diffutils"        = "*"
+"org.rust-lang.rust"       = ">= 1.98.1"
+"org.gnu.gcc-c++"          = ">= 16, < 17"
+"org.gnu.binutils"         = "*"
+"org.sourceware.debugedit" = "*"
+"org.mozilla.cbindgen"     = "= 0.29.2-1"
+"org.pkgconf.pkgconf"      = "*"
+
+[test.dependencies.apt]
+dash       = "*"
+bash       = "*"
+coreutils  = "*"
+findutils  = "*"
+gawk       = "*"
+grep       = "*"
+sed        = "*"
+diffutils  = "*"
+cargo      = "*"
+rustc      = "*"
+gcc        = "*"
+"g++"      = "*"
+binutils   = "*"
+debugedit  = "*"
+# Debian stable's generator is older. That rung verifies the committed ABI
+# snapshot; the Peios rung above requires and runs the exact 0.29.2 generator.
+cbindgen   = "*"
+pkgconf    = "*"
 [build.main.dependencies.peipkg]
 "org.git.kernel.dash"      = "*"
 "org.gnu.bash"             = "*"
