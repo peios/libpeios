@@ -32,6 +32,12 @@ pub enum WellKnownSid {
     BuiltinAdministrators,
     /// `S-1-5-32-545` — BUILTIN\Users.
     BuiltinUsers,
+    /// `S-1-3-0` — Creator Owner. A placeholder in an inheritable ACE,
+    /// replaced with the creating principal's SID during inheritance.
+    CreatorOwner,
+    /// `S-1-3-1` — Creator Group. The primary-group counterpart of
+    /// [`WellKnownSid::CreatorOwner`].
+    CreatorGroup,
 
     // Integrity levels (authority 16).
     /// `S-1-16-0` — Untrusted integrity level.
@@ -63,6 +69,8 @@ impl WellKnownSid {
         WellKnownSid::NetworkService,
         WellKnownSid::BuiltinAdministrators,
         WellKnownSid::BuiltinUsers,
+        WellKnownSid::CreatorOwner,
+        WellKnownSid::CreatorGroup,
         WellKnownSid::UntrustedIl,
         WellKnownSid::LowIl,
         WellKnownSid::MediumIl,
@@ -86,6 +94,8 @@ impl WellKnownSid {
             WellKnownSid::NetworkService => (5, &[20]),
             WellKnownSid::BuiltinAdministrators => (5, &[32, 544]),
             WellKnownSid::BuiltinUsers => (5, &[32, 545]),
+            WellKnownSid::CreatorOwner => (3, &[0]),
+            WellKnownSid::CreatorGroup => (3, &[1]),
             WellKnownSid::UntrustedIl => (16, &[0]),
             WellKnownSid::LowIl => (16, &[4096]),
             WellKnownSid::MediumIl => (16, &[8192]),
@@ -126,6 +136,8 @@ impl WellKnownSid {
             WellKnownSid::NetworkService => "NetworkService",
             WellKnownSid::BuiltinAdministrators => "BUILTIN\\Administrators",
             WellKnownSid::BuiltinUsers => "BUILTIN\\Users",
+            WellKnownSid::CreatorOwner => "Creator Owner",
+            WellKnownSid::CreatorGroup => "Creator Group",
             WellKnownSid::UntrustedIl => "Untrusted IL",
             WellKnownSid::LowIl => "Low IL",
             WellKnownSid::MediumIl => "Medium IL",

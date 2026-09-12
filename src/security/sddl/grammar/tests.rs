@@ -511,3 +511,159 @@ fn parse_sid_rejects_garbage() {
     let err = parse_sid("notasid").unwrap_err();
     assert!(matches!(err, SddlError::BadSid(_)));
 }
+
+// ---- Shared conformance corpus (PEI-562) ----
+//
+// The cases libpeios and libp-go must agree on. The same file, byte for
+// byte, lives at `libp-go/sddl/testdata/sddl-conformance.txt` and is read
+// by that package's `conformance_test.go`; the corpus header explains why
+// it is a copy rather than a genuinely shared file, and what to do when
+// changing it.
+
+const CONFORMANCE: &str = include_str!("../testdata/sddl-conformance.txt");
+
+/// Must match the corpus's `# revision:` line. Bumping the corpus without
+/// bumping this constant fails here, which is how a corpus updated on one
+/// side and not the other gets caught.
+const CONFORMANCE_REVISION: u32 = 1;
+
+struct ConformanceCase {
+    line: usize,
+    kind: &'static str,
+    arg: &'static str,
+    want: &'static str,
+}
+
+fn conformance_cases() -> alloc::vec::Vec<ConformanceCase> {
+    let mut cases = alloc::vec::Vec::new();
+    let mut revision = None;
+    for (index, text) in CONFORMANCE.lines().enumerate() {
+        let line = index + 1;
+        if let Some(rest) = text.strip_prefix("# revision:") {
+            revision = Some(rest.trim().parse::<u32>().expect("malformed revision line"));
+            continue;
+        }
+        if text.starts_with('#') || text.trim().is_empty() {
+            continue;
+        }
+        let mut fields = text.split('\t');
+        let kind = fields.next().expect("split yields at least one field");
+        let arg = fields
+            .next()
+            .unwrap_or_else(|| panic!("corpus line {line}: {kind} has no argument"));
+        let want = fields.next().unwrap_or("");
+        assert!(
+            fields.next().is_none(),
+            "corpus line {line}: too many tab-separated fields"
+        );
+        match kind {
+            "rights" | "sid" => assert!(
+                !want.is_empty(),
+                "corpus line {line}: {kind} takes two fields"
+            ),
+            "badrights" => assert!(
+                want.is_empty(),
+                "corpus line {line}: badrights takes one field"
+            ),
+            other => panic!("corpus line {line}: unknown case kind {other:?}"),
+        }
+        cases.push(ConformanceCase {
+            line,
+            kind,
+            arg,
+            want,
+        });
+    }
+    assert_eq!(
+        revision,
+        Some(CONFORMANCE_REVISION),
+        "the corpus and its copy in libp-go must be updated together"
+    );
+    assert!(!cases.is_empty(), "corpus is empty");
+    cases
+}
+
+#[test]
+fn conformance_rights_fields() {
+    let mut checked = 0usize;
+    for case in conformance_cases().iter().filter(|c| c.kind == "rights") {
+        checked += 1;
+        let want = u32::from_str_radix(case.want.trim_start_matches("0x"), 16)
+            .unwrap_or_else(|_| panic!("corpus line {}: bad expected mask", case.line));
+        let got = parse_rights(case.arg).unwrap_or_else(|e| {
+            panic!(
+                "corpus line {}: parse_rights({:?}) failed: {e:?}",
+                case.line, case.arg
+            )
+        });
+        assert_eq!(
+            got, want,
+            "corpus line {}: parse_rights({:?})",
+            case.line, case.arg
+        );
+    }
+    assert!(checked > 0, "no rights cases in the corpus");
+}
+
+#[test]
+fn conformance_bad_rights_fields() {
+    let mut checked = 0usize;
+    for case in conformance_cases().iter().filter(|c| c.kind == "badrights") {
+        checked += 1;
+        assert!(
+            parse_rights(case.arg).is_err(),
+            "corpus line {}: parse_rights({:?}) should have failed",
+            case.line,
+            case.arg
+        );
+    }
+    assert!(checked > 0, "no badrights cases in the corpus");
+}
+
+#[test]
+fn conformance_sid_aliases() {
+    let mut checked = 0usize;
+    for case in conformance_cases().iter().filter(|c| c.kind == "sid") {
+        checked += 1;
+        let sid = vocab::sid_from_alias(case.arg)
+            .unwrap_or_else(|| panic!("corpus line {}: unknown alias {:?}", case.line, case.arg));
+        assert_eq!(
+            sid.to_string(),
+            case.want,
+            "corpus line {}: {:?} resolves to the wrong SID",
+            case.line,
+            case.arg
+        );
+        assert_eq!(
+            vocab::alias_from_sid(&sid),
+            Some(case.arg),
+            "corpus line {}: {} must format back as {:?}",
+            case.line,
+            case.want,
+            case.arg
+        );
+        // And through the whole pipeline, which is the round trip the
+        // ticket asks for: text in, wire bytes, text out.
+        let text = alloc::format!("O:{}", case.arg);
+        assert_eq!(round_trip(&text), text, "corpus line {}", case.line);
+    }
+    assert!(checked > 0, "no sid cases in the corpus");
+}
+
+#[test]
+fn mixed_rights_field_in_whole_descriptor() {
+    // The case from the ticket: /tmp's descriptor wants FILE_ADD_FILE and
+    // FILE_ADD_SUBDIRECTORY, which have no two-letter mnemonic.
+    assert_eq!(parse_rights("FRFX0x6").unwrap(), 0x0012_00AF);
+    assert!(parse("D:(A;;FRFX0x6;;;WD)").is_ok());
+}
+
+#[test]
+fn ru_is_builtin_not_domain_relative() {
+    // BUILTIN\Pre-Windows 2000 Compatible Access reads like a domain alias
+    // and is not one; libpeios used to reject it as domain-relative.
+    assert_eq!(
+        parse_sid("RU").unwrap().to_string(),
+        "S-1-5-32-554"
+    );
+}

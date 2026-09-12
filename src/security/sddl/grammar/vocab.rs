@@ -176,22 +176,105 @@ pub(super) fn rights_format_order() -> &'static [(&'static str, u32)] {
 // SID aliases
 // ---------------------------------------------------------------------------
 
-const SID_ALIASES: &[(&str, WellKnownSid)] = &[
-    ("WD", WellKnownSid::Everyone),
-    ("AN", WellKnownSid::Anonymous),
-    ("AU", WellKnownSid::AuthenticatedUsers),
-    ("SY", WellKnownSid::LocalSystem),
-    ("LS", WellKnownSid::LocalService),
-    ("NS", WellKnownSid::NetworkService),
-    ("SU", WellKnownSid::Service),
-    ("BA", WellKnownSid::BuiltinAdministrators),
-    ("BU", WellKnownSid::BuiltinUsers),
-    ("LW", WellKnownSid::LowIl),
-    ("ME", WellKnownSid::MediumIl),
-    ("MP", WellKnownSid::MediumPlusIl),
-    ("HI", WellKnownSid::HighIl),
-    ("SI", WellKnownSid::SystemIl),
-    // S-1-0-0 has no canonical SDDL alias; emit/parse as S-1-0-0.
+/// How an alias names its SID.
+///
+/// Aliases that name a principal the rest of the crate already models
+/// delegate to [`WellKnownSid`], so those SIDs keep one definition. The
+/// rest — the BUILTIN groups and the logon-type principals Peios has no
+/// semantic use for — carry their authority and sub-authorities here.
+#[derive(Clone, Copy)]
+enum AliasSid {
+    WellKnown(WellKnownSid),
+    Literal(u64, &'static [u32]),
+}
+
+impl AliasSid {
+    fn to_sid(self) -> Sid {
+        match self {
+            AliasSid::WellKnown(w) => w.to_sid(),
+            AliasSid::Literal(authority, subs) => Sid::new(1, authority, subs.to_vec()),
+        }
+    }
+
+    fn matches(self, sid: &Sid) -> bool {
+        match self {
+            AliasSid::WellKnown(w) => w.matches(sid),
+            AliasSid::Literal(authority, subs) => {
+                sid.revision == 1
+                    && sid.authority == authority
+                    && sid.sub_authorities.as_slice() == subs
+            }
+        }
+    }
+}
+
+/// Every *absolute* two-letter SID alias in MS-DTYP §2.5.1.1 — one whose
+/// SID is fixed rather than relative to a domain or machine.
+///
+/// This is the same set libp-go's `sidAliases` resolves and formats, and
+/// it has to be: libp-go compiles a recipe's SDDL in `pekit` and
+/// `peipkg pack`, libpeios parses it in `seed-sd`, peinit and `sd`, and a
+/// descriptor one side formats with an alias the other has never heard of
+/// does not re-parse at all (PEI-562). The shared corpus at
+/// `../testdata/sddl-conformance.txt` pins the pairing; both suites read it.
+///
+/// Every SID here is distinct, so the mapping is a bijection and
+/// [`alias_from_sid`] has exactly one answer for each. `S-1-0-0` has no
+/// canonical alias and is emitted and parsed in full.
+const SID_ALIASES: &[(&str, AliasSid)] = &[
+    // World, logon-type and creator principals.
+    ("WD", AliasSid::WellKnown(WellKnownSid::Everyone)),
+    ("AN", AliasSid::WellKnown(WellKnownSid::Anonymous)),
+    ("AU", AliasSid::WellKnown(WellKnownSid::AuthenticatedUsers)),
+    ("IU", AliasSid::Literal(5, &[4])), // Interactive
+    ("NU", AliasSid::Literal(5, &[2])), // Network logon
+    ("SU", AliasSid::WellKnown(WellKnownSid::Service)),
+    ("RC", AliasSid::Literal(5, &[12])), // Restricted code
+    ("WR", AliasSid::Literal(5, &[33])), // Write-restricted code
+    ("PS", AliasSid::Literal(5, &[10])), // Principal self
+    ("ED", AliasSid::Literal(5, &[9])),  // Enterprise domain controllers
+    ("CO", AliasSid::WellKnown(WellKnownSid::CreatorOwner)),
+    ("CG", AliasSid::WellKnown(WellKnownSid::CreatorGroup)),
+    ("OW", AliasSid::Literal(3, &[4])),     // Owner rights
+    ("AC", AliasSid::Literal(15, &[2, 1])), // All application packages
+    ("SY", AliasSid::WellKnown(WellKnownSid::LocalSystem)),
+    ("LS", AliasSid::WellKnown(WellKnownSid::LocalService)),
+    ("NS", AliasSid::WellKnown(WellKnownSid::NetworkService)),
+    // Integrity levels. S-1-16-0 and S-1-16-20480 have no alias.
+    ("LW", AliasSid::WellKnown(WellKnownSid::LowIl)),
+    ("ME", AliasSid::WellKnown(WellKnownSid::MediumIl)),
+    ("MP", AliasSid::WellKnown(WellKnownSid::MediumPlusIl)),
+    ("HI", AliasSid::WellKnown(WellKnownSid::HighIl)),
+    ("SI", AliasSid::WellKnown(WellKnownSid::SystemIl)),
+    // The BUILTIN domain, S-1-5-32-*. Absolute despite the name: these
+    // RIDs are fixed by MS-DTYP, not allocated per machine.
+    (
+        "BA",
+        AliasSid::WellKnown(WellKnownSid::BuiltinAdministrators),
+    ),
+    ("BU", AliasSid::WellKnown(WellKnownSid::BuiltinUsers)),
+    ("BG", AliasSid::Literal(5, &[32, 546])), // Guests
+    ("PU", AliasSid::Literal(5, &[32, 547])), // Power users
+    ("AO", AliasSid::Literal(5, &[32, 548])), // Account operators
+    ("SO", AliasSid::Literal(5, &[32, 549])), // Server operators
+    ("PO", AliasSid::Literal(5, &[32, 550])), // Printer operators
+    ("BO", AliasSid::Literal(5, &[32, 551])), // Backup operators
+    ("RE", AliasSid::Literal(5, &[32, 552])), // Replicator
+    ("RU", AliasSid::Literal(5, &[32, 554])), // Pre-Windows 2000 compatible access
+    ("RD", AliasSid::Literal(5, &[32, 555])), // Remote desktop users
+    ("NO", AliasSid::Literal(5, &[32, 556])), // Network configuration operators
+    ("MU", AliasSid::Literal(5, &[32, 558])), // Performance monitor users
+    ("LU", AliasSid::Literal(5, &[32, 559])), // Performance log users
+    ("IS", AliasSid::Literal(5, &[32, 568])), // IIS users
+    ("CY", AliasSid::Literal(5, &[32, 569])), // Cryptographic operators
+    ("ER", AliasSid::Literal(5, &[32, 573])), // Event log readers
+    ("CD", AliasSid::Literal(5, &[32, 574])), // Certificate service DCOM access
+    ("RA", AliasSid::Literal(5, &[32, 575])), // RDS remote access servers
+    ("ES", AliasSid::Literal(5, &[32, 576])), // RDS endpoint servers
+    ("MS", AliasSid::Literal(5, &[32, 577])), // RDS management servers
+    ("HA", AliasSid::Literal(5, &[32, 578])), // Hyper-V administrators
+    ("AA", AliasSid::Literal(5, &[32, 579])), // Access control assistance operators
+    ("RM", AliasSid::Literal(5, &[32, 580])), // Remote management users
 ];
 
 pub(super) fn sid_from_alias(alias: &str) -> Option<Sid> {
@@ -206,11 +289,16 @@ pub(super) fn alias_from_sid(sid: &Sid) -> Option<&'static str> {
         .find_map(|&(a, w)| if w.matches(sid) { Some(a) } else { None })
 }
 
-/// Domain-relative aliases (MS-DTYP §2.5.1.1). We recognise them so the
-/// parser can return a clear error; we can't resolve them until Peios
-/// has a domain SID model.
+/// Domain- and machine-relative aliases (MS-DTYP §2.5.1.1). We recognise
+/// them so the parser can return a clear error; we can't resolve them
+/// until Peios has a domain SID model.
+///
+/// `RU` is deliberately absent: despite reading like a domain alias it is
+/// BUILTIN\Pre-Windows 2000 Compatible Access, `S-1-5-32-554`, which is
+/// absolute and now resolves from [`SID_ALIASES`] (PEI-562).
 const DOMAIN_RELATIVE: &[&str] = &[
-    "DA", "DG", "DU", "DD", "DC", "LA", "LG", "SA", "EA", "RO", "CA", "PA", "CN", "RS", "RU",
+    "DA", "DG", "DU", "DD", "DC", "LA", "LG", "SA", "EA", "RO", "CA", "PA", "CN", "RS", "AP", "KA",
+    "EK",
 ];
 
 pub(super) fn is_domain_relative_alias(alias: &str) -> bool {
