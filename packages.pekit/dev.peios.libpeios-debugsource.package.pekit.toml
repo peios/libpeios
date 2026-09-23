@@ -6,7 +6,7 @@ description  = "Peios userspace C ABI library debug sources"
 
 
 [dependencies]
-"dev.peios.libpeios-debuginfo" = "= {{version}}-1"
+"dev.peios.libpeios-debuginfo" = "= {{release}}"
 
 [files]
 "@source:LICENSE"       = "usr/share/licenses/dev.peios.libpeios-debugsource/LICENSE"

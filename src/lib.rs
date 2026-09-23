@@ -69,6 +69,7 @@ core::arch::global_asm!(
     ".globl rust_eh_personality",
     ".type rust_eh_personality, @function",
     "rust_eh_personality:",
+    "endbr64",
     "mov eax, 3",
     "ret",
     ".size rust_eh_personality, . - rust_eh_personality",
@@ -77,6 +78,7 @@ core::arch::global_asm!(
     ".globl _Unwind_Resume",
     ".type _Unwind_Resume, @function",
     "_Unwind_Resume:",
+    "endbr64",
     "call abort",
     ".size _Unwind_Resume, . - _Unwind_Resume",
 );

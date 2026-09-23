@@ -5,9 +5,9 @@ description = "Peios userspace C ABI library development files"
 
 
 [dependencies]
-"dev.peios.libpeios" = "= {{version}}-1"
+"dev.peios.libpeios" = "= {{release}}"
 # Public libpeios headers include the Peios kernel UAPI under <pkm/*.h>.
-"dev.peios.kernel-headers" = ">= 0.20.1-rc2"
+"dev.peios.kernel-headers" = ">= 0.20.1-rc13-1"
 
 [files]
 "@source:LICENSE"                                = "usr/share/licenses/dev.peios.libpeios-devel/LICENSE"

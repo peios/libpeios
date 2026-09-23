@@ -5,7 +5,7 @@ description = "Peios userspace C ABI library static archive"
 
 
 [dependencies]
-"dev.peios.libpeios-devel" = "= {{version}}-1"
+"dev.peios.libpeios-devel" = "= {{release}}"
 
 [files]
 "@source:LICENSE"                        = "usr/share/licenses/dev.peios.libpeios-static/LICENSE"
