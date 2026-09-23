@@ -282,6 +282,7 @@ gcc        = "*"
 "g++"      = "*"
 binutils   = "*"
 debugedit  = "*"
+dwz        = "*"
 # Debian stable's generator is older. That rung verifies the committed ABI
 # snapshot; the Peios rung above requires and runs the exact 0.29.2 generator.
 cbindgen   = "*"
