@@ -9,4 +9,5 @@ description = "Peios userspace C ABI library debugging symbols"
 
 [files]
 "@source:LICENSE"   = "usr/share/licenses/dev.peios.libpeios-debuginfo/LICENSE"
+":licenses/**"      = "usr/share/licenses/dev.peios.libpeios-debuginfo/third-party"
 ":usr/lib/debug/**" = "usr/lib/debug"

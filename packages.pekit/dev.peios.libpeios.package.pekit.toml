@@ -6,4 +6,5 @@ description = "Peios userspace C ABI library"
 
 [files]
 "@source:LICENSE"                           = "usr/share/licenses/dev.peios.libpeios/LICENSE"
+":licenses/**"                              = "usr/share/licenses/dev.peios.libpeios/third-party"
 ":usr/lib/x86_64-linux-peios/libpeios.so.0" = "usr/lib/x86_64-linux-peios/libpeios.so.0"

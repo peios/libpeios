@@ -6,6 +6,10 @@ format = "peipkg"
 [package]
 version       = "{{version}}-1"
 architecture  = "x86_64"
-license       = "MIT"
+# The shipped DSO and archive link libpeios' crate closure; build.main's
+# collect-rust-licences --check keeps this equal to what those crates declare.
+# dev.peios.libpeios-devel, which ships only headers and link metadata,
+# overrides it with the project's own MIT.
+license       = "(Apache-2.0 OR MIT) AND MIT"
 license_class = "free"
 homepage      = "https://github.com/peios/libpeios"

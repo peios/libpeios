@@ -1,6 +1,8 @@
 [package]
 name        = "dev.peios.libpeios-devel"
 description = "Peios userspace C ABI library development files"
+# Headers and link metadata only: no linked crate code.
+license     = "MIT"
 
 
 

@@ -10,4 +10,5 @@ description  = "Peios userspace C ABI library debug sources"
 
 [files]
 "@source:LICENSE"       = "usr/share/licenses/dev.peios.libpeios-debugsource/LICENSE"
+":licenses/**"          = "usr/share/licenses/dev.peios.libpeios-debugsource/third-party"
 ":usr/src/debug/**"     = "usr/src/debug"
