@@ -15,7 +15,9 @@
 
 #include <stdint.h>
 
+#include <pkm/process.h>	/* KACS_PROCESS_* rights */
 #include <pkm/psb.h>
+#include <pkm/sd.h>		/* struct kacs_generic_mapping */
 
 #ifdef __cplusplus
 extern "C" {
@@ -49,6 +51,13 @@ struct peios_psb {
  * a NULL @out.
  */
 int peios_process_psb(int pid, struct peios_psb *out);
+
+/*
+ * The canonical KACS generic mapping for the process object class, for an
+ * AccessCheck against a process's descriptor (read with peios_fd_get_sd on a
+ * pidfd), such as whether the caller may end it (KACS_PROCESS_TERMINATE).
+ */
+extern const struct kacs_generic_mapping peios_process_generic_mapping;
 
 #ifdef __cplusplus
 }

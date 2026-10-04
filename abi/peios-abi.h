@@ -260,6 +260,8 @@ extern "C" {
 
 extern const struct kacs_generic_mapping peios_file_generic_mapping;
 
+extern const struct kacs_generic_mapping peios_process_generic_mapping;
+
 extern const struct kacs_generic_mapping peios_token_generic_mapping;
 
 int peios_access_check(const struct peios_access_request *req,

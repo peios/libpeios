@@ -8,11 +8,62 @@
 
 use core::ffi::{c_char, c_int, c_long};
 
-use peios_uapi::SYS_KACS_SET_PSB;
+use peios_uapi::{
+    kacs_generic_mapping, KACS_ACCESS_READ_CONTROL, KACS_ACCESS_WRITE_DAC,
+    KACS_ACCESS_WRITE_OWNER, KACS_PROCESS_DUP_HANDLE, KACS_PROCESS_QUERY_INFORMATION,
+    KACS_PROCESS_QUERY_LIMITED, KACS_PROCESS_SET_INFORMATION, KACS_PROCESS_SIGNAL,
+    KACS_PROCESS_SUSPEND_RESUME, KACS_PROCESS_TERMINATE, KACS_PROCESS_VM_READ,
+    KACS_PROCESS_VM_WRITE, SYS_KACS_SET_PSB,
+};
 
 use crate::error::set_errno;
 use crate::kfile::{decimal, field, hex_into, read_whole};
 use crate::sys::{ret_int, syscall2};
+
+// ----------------------------------------------------------------------------
+// peios_process_generic_mapping
+// ----------------------------------------------------------------------------
+
+/// Composed from the named uapi rights, mirroring the kernel's process generic
+/// mapping (`kacs_core::access_mask::PROCESS_GENERIC_MAPPING`) and pinned by
+/// the asserts below, so that a program asking what a process's descriptor
+/// grants it maps the generic rights as the kernel will.
+const PROCESS_READ: u32 =
+    KACS_PROCESS_QUERY_INFORMATION | KACS_PROCESS_VM_READ | KACS_ACCESS_READ_CONTROL;
+const PROCESS_WRITE: u32 =
+    KACS_PROCESS_SET_INFORMATION | KACS_PROCESS_VM_WRITE | KACS_ACCESS_WRITE_DAC;
+const PROCESS_EXECUTE: u32 =
+    KACS_PROCESS_TERMINATE | KACS_PROCESS_SUSPEND_RESUME | KACS_PROCESS_QUERY_LIMITED;
+const PROCESS_ALL: u32 = KACS_PROCESS_TERMINATE
+    | KACS_PROCESS_SIGNAL
+    | KACS_PROCESS_SUSPEND_RESUME
+    | KACS_PROCESS_VM_READ
+    | KACS_PROCESS_VM_WRITE
+    | KACS_PROCESS_DUP_HANDLE
+    | KACS_PROCESS_SET_INFORMATION
+    | KACS_PROCESS_QUERY_INFORMATION
+    | KACS_PROCESS_QUERY_LIMITED
+    | KACS_ACCESS_READ_CONTROL
+    | KACS_ACCESS_WRITE_DAC
+    | KACS_ACCESS_WRITE_OWNER;
+
+const _: () = {
+    assert!(PROCESS_READ == 0x0002_0410);
+    assert!(PROCESS_WRITE == 0x0004_0220);
+    assert!(PROCESS_EXECUTE == 0x0000_1801);
+    assert!(PROCESS_ALL == 0x000E_1E73);
+};
+
+/// `peios_process_generic_mapping` — the canonical KACS generic mapping for
+/// the process object class, exported as a read-only data symbol (mirrors the
+/// kernel).
+#[no_mangle]
+pub static peios_process_generic_mapping: kacs_generic_mapping = kacs_generic_mapping {
+    read: PROCESS_READ,
+    write: PROCESS_WRITE,
+    execute: PROCESS_EXECUTE,
+    all: PROCESS_ALL,
+};
 
 /// `struct peios_psb` — a process's PSB as `/proc/<pid>/psb` gives it.
 #[repr(C)]
