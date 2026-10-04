@@ -15,6 +15,8 @@ struct peios_acl_builder;
 
 struct peios_event_reader;
 
+struct peios_logon_sessions;
+
 struct peios_mp_writer;
 
 struct peios_sd_builder;
@@ -99,6 +101,17 @@ struct peios_open_params {
   size_t sd_len;
 };
 
+struct peios_logon_session {
+  uint64_t logon_session_id;
+  uint64_t created_at;
+  uint32_t logon_type;
+  uint32_t user_sid_len;
+  const uint8_t *user_sid;
+  const char *auth_package;
+  uint32_t auth_package_len;
+  uint32_t reserved;
+};
+
 struct peios_mount_policy {
   uint32_t policy;
   uint32_t flags;
@@ -109,6 +122,13 @@ struct peios_mount_policy {
 
 struct peios_mp_reader {
   uint64_t _opaque[4];
+};
+
+struct peios_psb {
+  uint32_t pip_type;
+  uint32_t pip_trust;
+  uint32_t mitigations;
+  uint8_t process_guid[16];
 };
 
 struct peios_reg_subkey {
@@ -374,6 +394,13 @@ int peios_file_set_sd(int dirfd,
                       size_t len,
                       uint32_t at_flags);
 
+void peios_logon_sessions_close(struct peios_logon_sessions *sessions);
+
+int peios_logon_sessions_next(struct peios_logon_sessions *sessions,
+                              struct peios_logon_session *out);
+
+struct peios_logon_sessions *peios_logon_sessions_open(void);
+
 int peios_mount_get_policy(int fd, struct peios_mount_policy *out, void *tmpl_buf, size_t tmpl_cap);
 
 int peios_mount_set_policy(int fd, const struct peios_mount_policy *p);
@@ -439,6 +466,8 @@ void peios_mp_writer_free(struct peios_mp_writer *w);
 struct peios_mp_writer *peios_mp_writer_new(void);
 
 void peios_mp_writer_reset(struct peios_mp_writer *w);
+
+int peios_process_psb(int pid, struct peios_psb *out);
 
 int peios_process_set_mitigations(int pidfd, uint32_t mitigations);
 

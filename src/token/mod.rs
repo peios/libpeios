@@ -13,6 +13,7 @@ pub mod builder;
 pub mod message;
 pub mod ops;
 pub mod query;
+pub mod sessions;
 
 use peios_uapi::{
     kacs_generic_mapping, KACS_ACCESS_READ_CONTROL, KACS_ACCESS_WRITE_DAC,

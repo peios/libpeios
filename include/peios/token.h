@@ -354,6 +354,41 @@ int peios_session_create(const struct peios_session_spec *spec, uint64_t *id_out
 /* Destroy a session that has no live tokens (SeTcbPrivilege). */
 int peios_session_destroy_empty(uint64_t session_id);
 
+/*
+ * Listing the live logon sessions, from securityfs's kacs/sessions. The
+ * listing is taken whole at open, so a walk sees one moment; reading it needs
+ * Administrators or SYSTEM.
+ */
+struct peios_logon_session {
+	uint64_t	logon_session_id; /* the session's LUID: a token's auth_id */
+	uint64_t	created_at;	  /* seconds since the Unix epoch */
+	uint32_t	logon_type;	  /* KACS_LOGON_TYPE_* */
+	uint32_t	user_sid_len;
+	const uint8_t  *user_sid;	  /* binary SID */
+	const char     *auth_package;	  /* UTF-8, not NUL-terminated */
+	uint32_t	auth_package_len;
+	uint32_t	reserved;	  /* zero */
+};
+
+typedef struct peios_logon_sessions peios_logon_sessions;
+
+/*
+ * Take the listing. NULL with errno on failure: EACCES without Administrators
+ * or SYSTEM, ENOENT where securityfs is not mounted, ENOMEM.
+ */
+peios_logon_sessions *peios_logon_sessions_open(void);
+
+/*
+ * Fill @out with the next session. Returns 1 (filled), 0 (no more), or -1
+ * with errno (EPROTO for a line this library cannot read, which the walk can
+ * step past by calling again; ENOMEM; EINVAL). The @out pointers are valid
+ * until the next call.
+ */
+int peios_logon_sessions_next(peios_logon_sessions *s, struct peios_logon_session *out);
+
+/* Free the reader. NULL is a no-op. */
+void peios_logon_sessions_close(peios_logon_sessions *s);
+
 /* The canonical KACS generic mapping for the token object class. */
 extern const struct kacs_generic_mapping peios_token_generic_mapping;
 

@@ -22,6 +22,7 @@ mod access;
 mod error;
 mod event;
 mod file;
+mod kfile;
 mod msgpack;
 mod process;
 mod registry;

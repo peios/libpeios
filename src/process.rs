@@ -1,16 +1,159 @@
 //! `<peios/process.h>` — Peios process security context.
 //!
-//! Currently the home of the process-security-block (PSB) mitigation control:
-//! `peios_process_set_mitigations` over `kacs_set_psb` (syscall 1005). It crosses
-//! the kernel boundary and packs no argument struct (a direct two-argument
-//! syscall), so there is nothing to unit-test — it is exercised live under
-//! Provium, like the other fd-returning / passthrough syscall wrappers.
+//! The home of the process security block (PSB): turning on mitigations with
+//! `peios_process_set_mitigations` over `kacs_set_psb` (syscall 1005), and
+//! reading a process's PSB with `peios_process_psb` from `/proc/<pid>/psb`.
+//! The set is a passthrough syscall exercised live under Provium; the read's
+//! parser is unit-tested here.
 
-use core::ffi::{c_int, c_long};
+use core::ffi::{c_char, c_int, c_long};
 
 use peios_uapi::SYS_KACS_SET_PSB;
 
+use crate::error::set_errno;
+use crate::kfile::{decimal, field, hex_into, read_whole};
 use crate::sys::{ret_int, syscall2};
+
+/// `struct peios_psb` — a process's PSB as `/proc/<pid>/psb` gives it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct peios_psb {
+    /// PIP type: 0 for none, 512 for Protected.
+    pub pip_type: u32,
+    /// PIP trust within the type: 8192 for PeiosTcb.
+    pub pip_trust: u32,
+    /// The committed `KACS_MIT_*` bits.
+    pub mitigations: u32,
+    /// The process's GUID, 16 bytes in the order the kernel prints them.
+    pub process_guid: [u8; 16],
+}
+
+/// Parse one `/proc/<pid>/psb` line. `None` if a known field is missing or
+/// malformed; unknown fields are ignored.
+fn parse_psb(text: &[u8]) -> Option<peios_psb> {
+    let line = text.split(|&b| b == b'\n').next()?;
+    let u32_of = |key: &[u8]| decimal(field(line, key)?).and_then(|n| u32::try_from(n).ok());
+    let mitigations = field(line, b"mitigations")?.strip_prefix(b"0x")?;
+    if mitigations.is_empty() || mitigations.len() > 8 {
+        return None;
+    }
+    let mitigations = mitigations.iter().try_fold(0u32, |n, &b| {
+        Some(n << 4 | (b as char).to_digit(16)?)
+    })?;
+    let guid_text: alloc::vec::Vec<u8> = field(line, b"process_guid")?
+        .iter()
+        .copied()
+        .filter(|&b| b != b'-')
+        .collect();
+    let mut guid = alloc::vec::Vec::new();
+    hex_into(&guid_text, &mut guid)?.ok()?;
+    Some(peios_psb {
+        pip_type: u32_of(b"pip_type")?,
+        pip_trust: u32_of(b"pip_trust")?,
+        mitigations,
+        process_guid: guid.try_into().ok()?,
+    })
+}
+
+/// `peios_process_psb` — read process `pid`'s PSB into `*out`.
+///
+/// `pid <= 0` reads the caller's own. Another process's needs
+/// `PROCESS_QUERY_LIMITED` on its descriptor and not PIP dominance, so a
+/// protected process's PIP is readable when nothing else about it is.
+///
+/// Returns 0, or `-1` with errno: whatever opening or reading the file said
+/// (`ENOENT` for a process that is gone, `EACCES` when refused), `EPROTO` for
+/// a line this library cannot read, `EINVAL` for a NULL `out`.
+///
+/// # Safety
+/// `out` must be NULL or writable.
+#[no_mangle]
+pub unsafe extern "C" fn peios_process_psb(pid: c_int, out: *mut peios_psb) -> c_int {
+    if out.is_null() {
+        set_errno(libc::EINVAL);
+        return -1;
+    }
+    // "/proc/" + up to 10 digits + "/psb" + NUL, or "/proc/self/psb".
+    let mut path = [0u8; 32];
+    let mut len = 0;
+    let mut push = |bytes: &[u8]| {
+        path[len..len + bytes.len()].copy_from_slice(bytes);
+        len += bytes.len();
+    };
+    push(b"/proc/");
+    if pid <= 0 {
+        push(b"self");
+    } else {
+        let mut digits = [0u8; 10];
+        let mut n = pid as u32;
+        let mut i = digits.len();
+        loop {
+            i -= 1;
+            digits[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+            if n == 0 {
+                break;
+            }
+        }
+        push(&digits[i..]);
+    }
+    push(b"/psb\0");
+    let text = match read_whole(path.as_ptr() as *const c_char) {
+        Ok(text) => text,
+        Err(errno) => {
+            set_errno(errno);
+            return -1;
+        }
+    };
+    match parse_psb(&text) {
+        Some(psb) => {
+            out.write(psb);
+            0
+        }
+        None => {
+            set_errno(libc::EPROTO);
+            -1
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_the_kernels_line() {
+        let psb = parse_psb(
+            b"pip_type=512 pip_trust=8192 mitigations=0x105 \
+              process_guid=3f2c9a1e-6b0d-4c8e-9a41-2d7e5f10b6c3\n",
+        )
+        .unwrap();
+        assert_eq!(psb.pip_type, 512);
+        assert_eq!(psb.pip_trust, 8192);
+        assert_eq!(psb.mitigations, 0x105);
+        assert_eq!(psb.process_guid[0], 0x3f);
+        assert_eq!(psb.process_guid[15], 0xc3);
+    }
+
+    #[test]
+    fn ignores_fields_it_does_not_know_and_refuses_missing_ones() {
+        assert!(parse_psb(
+            b"pip_type=0 later=1 pip_trust=0 mitigations=0x000 \
+              process_guid=00000000-0000-0000-0000-000000000000\n"
+        )
+        .is_some());
+        assert!(parse_psb(b"pip_type=0 pip_trust=0 mitigations=0x000\n").is_none());
+        assert!(parse_psb(
+            b"pip_type=0 pip_trust=0 mitigations=105 \
+              process_guid=00000000-0000-0000-0000-000000000000\n"
+        )
+        .is_none());
+        assert!(parse_psb(
+            b"pip_type=0 pip_trust=0 mitigations=0x0 process_guid=0011\n"
+        )
+        .is_none());
+    }
+}
 
 /// `peios_process_set_mitigations` — turn on process mitigation bits.
 ///
