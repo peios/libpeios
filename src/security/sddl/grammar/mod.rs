@@ -41,7 +41,9 @@ use crate::security::sddl::codec::{
     ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT, ACE_TYPE_ACCESS_DENIED_OBJECT, ACE_TYPE_SYSTEM_AUDIT,
     ACE_TYPE_SYSTEM_AUDIT_CALLBACK, ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT,
     ACE_TYPE_SYSTEM_AUDIT_OBJECT, ACE_TYPE_SYSTEM_MANDATORY_LABEL,
-    ACE_TYPE_SYSTEM_RESOURCE_ATTRIBUTE, AceRef, Acl, SE_DACL_AUTO_INHERITED, SE_DACL_PRESENT,
+    ACE_TYPE_SYSTEM_RESOURCE_ATTRIBUTE, ACE_TYPE_SYSTEM_ACCESS_FILTER,
+    ACE_TYPE_SYSTEM_ALARM_CALLBACK, ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT,
+    ACE_TYPE_SYSTEM_ALARM_OBJECT, AceRef, Acl, SE_DACL_AUTO_INHERITED, SE_DACL_PRESENT,
     SE_DACL_PROTECTED, SE_SACL_AUTO_INHERITED, SE_SACL_PRESENT, SE_SACL_PROTECTED,
     SecurityDescriptor,
 };
@@ -395,7 +397,10 @@ pub fn parse_ace(s: &str) -> Result<AceBuilder> {
         | ACE_TYPE_SYSTEM_AUDIT_CALLBACK
         | ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT
         | ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT
-        | ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT => {
+        | ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT
+        | ACE_TYPE_SYSTEM_ALARM_CALLBACK
+        | ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT
+        | ACE_TYPE_SYSTEM_ACCESS_FILTER => {
             let payload = payload.ok_or_else(|| SddlError::MissingPayload(type_upper.clone()))?;
             let condition =
                 cond::parse(payload).map_err(|e| SddlError::BadCondition(e.to_string()))?;
@@ -433,7 +438,18 @@ pub fn parse_ace(s: &str) -> Result<AceBuilder> {
                     &condition,
                 )
                 .map_err(map_encode)?,
-                _ => unreachable!(),
+                ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT => AceBuilder::callback_object(
+                    ace_type,
+                    sid,
+                    mask,
+                    object_type,
+                    inherited_object_type,
+                    &condition,
+                )
+                .map_err(map_encode)?,
+                // The callback alarm and the access filter: mask, SID and
+                // condition, as XU.
+                _ => AceBuilder::callback(ace_type, sid, mask, &condition).map_err(map_encode)?,
             }
         }
 
@@ -456,6 +472,12 @@ pub fn parse_ace(s: &str) -> Result<AceBuilder> {
             }
             AceBuilder::audit_object(sid, mask, object_type, inherited_object_type)
         }
+        ACE_TYPE_SYSTEM_ALARM_OBJECT => {
+            if payload.is_some() {
+                return Err(SddlError::UnexpectedPayload(type_upper));
+            }
+            AceBuilder::object(ace_type, sid, mask, object_type, inherited_object_type)
+        }
 
         // Simple mask + SID.
         ACE_TYPE_ACCESS_ALLOWED => AceBuilder::allow(sid, mask),
@@ -463,7 +485,7 @@ pub fn parse_ace(s: &str) -> Result<AceBuilder> {
         ACE_TYPE_SYSTEM_AUDIT => AceBuilder::audit(sid, mask),
         ACE_TYPE_SYSTEM_MANDATORY_LABEL => AceBuilder::mandatory_label(sid, mask),
 
-        // Other simple mask+sid ACEs (scoped-policy-id, alarm variants).
+        // Other simple mask+sid ACEs (scoped policy, alarm, trust label).
         // Synthesise the body verbatim — no typed constructor exists.
         t => {
             let mut body = Vec::with_capacity(4 + sid.encoded_len());
@@ -480,7 +502,7 @@ pub fn parse_ace(s: &str) -> Result<AceBuilder> {
 /// parentheses.
 pub fn format_ace(ace: &AceRef<'_>) -> Result<String> {
     let type_code =
-        vocab::ace_code_from_type(ace.ace_type).ok_or(SddlError::Format("unknown ACE type"))?;
+        vocab::ace_code_from_type(ace.ace_type).ok_or(SddlError::Format("ACE type has no SDDL code"))?;
 
     let mut out = String::new();
     out.push('(');
@@ -893,6 +915,8 @@ fn is_object_ace(t: u8) -> bool {
             | ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT
             | ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT
             | ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT
+            | ACE_TYPE_SYSTEM_ALARM_OBJECT
+            | ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT
     )
 }
 
@@ -905,6 +929,9 @@ fn is_callback_ace(t: u8) -> bool {
             | ACE_TYPE_ACCESS_ALLOWED_CALLBACK_OBJECT
             | ACE_TYPE_ACCESS_DENIED_CALLBACK_OBJECT
             | ACE_TYPE_SYSTEM_AUDIT_CALLBACK_OBJECT
+            | ACE_TYPE_SYSTEM_ALARM_CALLBACK
+            | ACE_TYPE_SYSTEM_ALARM_CALLBACK_OBJECT
+            | ACE_TYPE_SYSTEM_ACCESS_FILTER
     )
 }
 
@@ -984,11 +1011,8 @@ fn format_acl_body(acl: Option<&Acl<'_>>, kind: AclKind, control: u16) -> Result
     };
     for ace_res in acl.aces_iter() {
         let ace = ace_res.map_err(|_| SddlError::Format("ACE did not parse"))?;
-        // Skip ACEs whose type we can't represent — emitting a partial
-        // string would silently corrupt meaning.
-        if vocab::ace_code_from_type(ace.ace_type).is_none() {
-            continue;
-        }
+        // A type with no code fails the whole string: leaving the entry
+        // out would show a descriptor that isn't the one held.
         out.push_str(&format_ace(&ace)?);
     }
     Ok(out)

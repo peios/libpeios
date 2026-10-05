@@ -171,6 +171,41 @@ fn scoped_policy_id_round_trips() {
     assert_eq!(round_trip(s), s);
 }
 
+#[test]
+fn alarms_round_trip() {
+    // AL and OL are Windows' codes; XL and ZL are Peios' own for the two
+    // callback alarms, which Windows never named.
+    for s in [
+        "S:(AL;SA;FA;;;WD)",
+        "S:(OL;FA;GR;11111111-2222-3333-4444-555555555555;;BA)",
+        "S:(XL;SA;FA;;;BU;(@User.dept == \"Eng\"))",
+        "S:(ZL;SA;GR;11111111-2222-3333-4444-555555555555;;BU;(Exists @User.dept))",
+    ] {
+        assert_eq!(round_trip(s), s);
+    }
+}
+
+#[test]
+fn trust_label_and_access_filter_round_trip() {
+    for s in ["S:(TL;;RC;;;S-1-19-1024-8192)", "S:(FL;;FA;;;WD;(Member_of {SID(BA)}))"] {
+        assert_eq!(round_trip(s), s);
+    }
+}
+
+#[test]
+fn an_ace_type_without_a_code_fails_the_format() {
+    // Formatting used to leave such an entry out without a word, showing a
+    // descriptor that wasn't the one held.
+    for ace_type in [0x04u8, 0x16] {
+        let mut body = vec![0xffu8, 0x01, 0x1f, 0x00];
+        body.extend_from_slice(&parse_sid("WD").unwrap().encode());
+        let acl = AclBuilder::new().allow(parse_sid("BA").unwrap(), 0x1f01ff).ace(AceBuilder::raw(ace_type, body).unwrap());
+        let bytes = SdBuilder::new().dacl(acl).build().unwrap();
+        let sd = SecurityDescriptor::parse(&bytes).unwrap();
+        assert_eq!(format(&sd), Err(SddlError::Format("ACE type has no SDDL code")));
+    }
+}
+
 // ---- Conditional / callback ACEs ----
 
 #[test]

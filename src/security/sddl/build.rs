@@ -167,7 +167,7 @@ impl AceBuilder {
         )
     }
 
-    fn object(
+    pub(crate) fn object(
         ace_type: u8,
         sid: Sid,
         mask: u32,
@@ -327,7 +327,7 @@ impl AceBuilder {
         )
     }
 
-    fn callback(ace_type: u8, sid: Sid, mask: u32, condition: &Condition) -> Result<Self> {
+    pub(crate) fn callback(ace_type: u8, sid: Sid, mask: u32, condition: &Condition) -> Result<Self> {
         // Non-object callback body: mask, SID, then the conditional
         // expression as ApplicationData.
         let mut body = Vec::new();
@@ -337,7 +337,7 @@ impl AceBuilder {
         Self::raw(ace_type, body)
     }
 
-    fn callback_object(
+    pub(crate) fn callback_object(
         ace_type: u8,
         sid: Sid,
         mask: u32,
