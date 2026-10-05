@@ -339,15 +339,34 @@ ssize_t peios_sddl_parse_condition(void *out, size_t cap, const char *expr);
 ssize_t peios_sddl_format_condition(char *out, size_t cap, const void *artx, size_t len);
 
 /*
- * peios_sd_reinherit - recompute a child SD's inherited ACEs from a parent SD.
- * Strips ACEs carrying ACE_FLAG_INHERITED from the child DACL, re-derives them
- * from the parent DACL (MS-DTYP §2.5.3.4), and appends them after the child's
- * explicit ACEs; owner/group/SACL and the control bits pass through. Both
- * inputs must be self-relative; the output is self-relative.
+ * peios_sd_reinherit_ex - re-propagate to a child SD from its parent SD
+ * (PCDS §5.6, Re-propagation). For each list @info selects
+ * (DACL_SECURITY_INFORMATION, SACL_SECURITY_INFORMATION) that the child does
+ * not protect (SE_DACL_PROTECTED, SE_SACL_PROTECTED): drop the child's
+ * inherited ACEs, keep its explicit ACEs in order, and append what the
+ * parent's list passes to it, as KACS gives it to a child it creates --
+ * CREATOR OWNER and CREATOR GROUP resolved to the child's own owner and
+ * group, generic rights mapped through @mapping where they apply, and an
+ * ACE that also goes on from a container kept as an inherit-only copy left
+ * as written. The list is marked auto-inherited. A protected list, a list
+ * not selected, the owner and the group pass through. Both inputs must be
+ * self-relative; the output is self-relative.
  * @out: destination buffer (or NULL to probe). @cap: capacity (0 to probe).
  * @parent_sd / @parent_len: the parent SD bytes. @child_sd / @child_len: the
  * child SD bytes. @is_container: non-zero if the child is a container.
+ * @mapping: the child object type's generic mapping, or NULL to leave
+ * generic rights as written. @info: the lists to re-propagate.
  * Returns the new child SD byte length, or -1 (EINVAL; ERANGE).
+ */
+ssize_t peios_sd_reinherit_ex(void *out, size_t cap, const void *parent_sd,
+			      size_t parent_len, const void *child_sd,
+			      size_t child_len, int is_container,
+			      const struct kacs_generic_mapping *mapping,
+			      uint32_t info);
+
+/*
+ * peios_sd_reinherit - peios_sd_reinherit_ex with no generic mapping, for the
+ * DACL alone (DACL_SECURITY_INFORMATION). A protected DACL is left as it is.
  */
 ssize_t peios_sd_reinherit(void *out, size_t cap, const void *parent_sd,
 			   size_t parent_len, const void *child_sd,

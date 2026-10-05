@@ -13,7 +13,7 @@ use core::slice;
 
 use crate::abi::{cstr_bytes, emit_bytes, emit_str};
 use crate::error::set_errno;
-use crate::security::sddl::codec::SecurityDescriptor;
+use crate::security::sddl::codec::{GenericMapping, SecurityDescriptor};
 use crate::security::sddl::{grammar, inherit};
 
 /// Upper bound on an accepted SDDL / conditional-expression string. A full
@@ -126,10 +126,8 @@ pub unsafe extern "C" fn peios_sddl_format_condition(
     }
 }
 
-/// Reinherit a child SD from a parent SD: strip the child DACL's inherited
-/// ACEs, recompute and append them from the parent DACL, pass owner/group/
-/// SACL and the control bits through. Both inputs self-relative; output
-/// self-relative. `is_container != 0` for a container child.
+/// Reinherit a child SD's DACL from a parent SD: [`peios_sd_reinherit_ex`]
+/// with no generic mapping and `DACL_SECURITY_INFORMATION`.
 #[no_mangle]
 pub unsafe extern "C" fn peios_sd_reinherit(
     out: *mut c_void,
@@ -146,6 +144,40 @@ pub unsafe extern "C" fn peios_sd_reinherit(
         return -1;
     };
     match inherit::reinherit(parent, child, is_container != 0) {
+        Ok(v) => emit_bytes(&v, out as *mut u8, cap),
+        Err(_) => {
+            set_errno(libc::EINVAL);
+            -1
+        }
+    }
+}
+
+/// Re-propagate to a child SD from its parent SD (PCDS §5.6): for each list
+/// `info` selects (DACL and/or SACL) that the child does not protect, drop
+/// its inherited ACEs and append what the parent's list passes to it,
+/// resolved against the child's owner and group and mapped through
+/// `mapping` (NULL: generic rights stay as written). Both inputs
+/// self-relative; output self-relative. `is_container != 0` for a
+/// container child.
+#[no_mangle]
+pub unsafe extern "C" fn peios_sd_reinherit_ex(
+    out: *mut c_void,
+    cap: usize,
+    parent_sd: *const c_void,
+    parent_len: usize,
+    child_sd: *const c_void,
+    child_len: usize,
+    is_container: c_int,
+    mapping: *const peios_uapi::kacs_generic_mapping,
+    info: u32,
+) -> isize {
+    let (Some(parent), Some(child)) = (input(parent_sd, parent_len), input(child_sd, child_len))
+    else {
+        set_errno(libc::EINVAL);
+        return -1;
+    };
+    let mapping = mapping.as_ref().map(|m| GenericMapping { read: m.read, write: m.write, execute: m.execute, all: m.all });
+    match inherit::reinherit_with(parent, child, is_container != 0, mapping, info) {
         Ok(v) => emit_bytes(&v, out as *mut u8, cap),
         Err(_) => {
             set_errno(libc::EINVAL);

@@ -590,6 +590,16 @@ ptrdiff_t peios_sd_reinherit(void *out,
                              size_t child_len,
                              int is_container);
 
+ptrdiff_t peios_sd_reinherit_ex(void *out,
+                                size_t cap,
+                                const void *parent_sd,
+                                size_t parent_len,
+                                const void *child_sd,
+                                size_t child_len,
+                                int is_container,
+                                const struct kacs_generic_mapping *mapping,
+                                uint32_t info);
+
 ptrdiff_t peios_sd_strip_inherited(void *out,
                                    size_t cap,
                                    const void *sd,
