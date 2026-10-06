@@ -13,6 +13,8 @@
 
 struct peios_acl_builder;
 
+struct peios_event_policy;
+
 struct peios_event_reader;
 
 struct peios_logon_sessions;
@@ -356,6 +358,15 @@ int peios_event_emit(const char *event_type,
 int peios_event_emit_batch(const struct peios_event_entry *entries,
                            uint32_t count,
                            uint32_t *emitted_out);
+
+void peios_event_policy_close(struct peios_event_policy *policy);
+
+int peios_event_policy_enabled(struct peios_event_policy *policy,
+                               const char *event_type,
+                               uint16_t event_type_len,
+                               uint32_t tier);
+
+struct peios_event_policy *peios_event_policy_open(void);
 
 void peios_event_reader_close(struct peios_event_reader *reader);
 

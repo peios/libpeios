@@ -68,6 +68,63 @@ int peios_event_emit_batch(const struct peios_event_entry *entries,
 			   uint32_t count, uint32_t *emitted_out);
 
 /* ====================================================================== */
+/* Emission policy (PGSS §6.9)                                            */
+/* ====================================================================== */
+
+/*
+ * Before building an event's payload, an emitter asks whether the event's type
+ * is switched on. The policy is the registry tree under Machine\Generic\Events:
+ * one key per segment of the type, each optionally holding an "Enabled"
+ * REG_DWORD of 0 or 1 (any other type or number is ignored). The deepest
+ * Enabled on the type's path wins; with none, the tier decides. An essential
+ * type never consults the tree.
+ *
+ * This is a query, not a check inside peios_event_emit: the point is to skip
+ * building the payload, which is already built by the time emit is called.
+ *
+ *	if (peios_event_policy_enabled(policy, type, len, PEIOS_EVENT_TIER_VERBOSE) == 1) {
+ *		... build the payload ...
+ *		peios_event_emit(type, len, payload, payload_len);
+ *	}
+ *
+ * The handle caches each type's setting and keeps it current with a registry
+ * watch, so a committed change applies to the next decision; where nothing can
+ * be watched it re-reads at least once a second. Without a readable registry
+ * (no LCS source yet, the key absent, access denied) every decision is by tier
+ * until the policy becomes readable. A handle is for one thread at a time, and
+ * not for use across fork(): the child opens its own.
+ */
+#define PEIOS_EVENT_TIER_ESSENTIAL	0u	/* always on; never consults the policy */
+#define PEIOS_EVENT_TIER_STANDARD	1u	/* on unless switched off */
+#define PEIOS_EVENT_TIER_VERBOSE	2u	/* off unless switched on */
+#define PEIOS_EVENT_TIER_DEBUG		3u	/* off unless switched on */
+
+typedef struct peios_event_policy peios_event_policy;
+
+/*
+ * Open a view of the emission policy. Succeeds without a registry (deciding by
+ * tier until one appears); returns NULL with errno only on ENOMEM.
+ */
+peios_event_policy *peios_event_policy_open(void);
+
+/* Close the handle's registry fds and free it. NULL-safe. */
+void peios_event_policy_close(peios_event_policy *policy);
+
+/*
+ * peios_event_policy_enabled - is @event_type at @tier switched on?
+ * @event_type:     length-counted UTF-8 event type; not NUL-terminated.
+ * @event_type_len: its length in bytes.
+ * @tier:           PEIOS_EVENT_TIER_*.
+ *
+ * Returns 1 (on: build and emit), 0 (off: build nothing), or -1 with errno
+ * EINVAL for a NULL @policy or @event_type, a malformed type (empty, not UTF-8,
+ * an empty segment, or a '\' or NUL in a segment) or an unknown tier. Registry
+ * trouble never fails a decision; it falls back to the tier.
+ */
+int peios_event_policy_enabled(peios_event_policy *policy, const char *event_type,
+			       uint16_t event_type_len, uint32_t tier);
+
+/* ====================================================================== */
 /* Consume (consumer side)                                                */
 /* ====================================================================== */
 
