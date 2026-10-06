@@ -80,15 +80,16 @@ const WATCH_BUF: usize = 64 * 1024;
 // ----------------------------------------------------------------------------
 
 /// Split an event type into its segments, or `None` if it is malformed: empty,
-/// not UTF-8, with an empty segment, or with a byte no registry key name may
-/// hold (`\` or NUL).
+/// not UTF-8, with an empty segment, or with a byte that would not name one key:
+/// `\` and `/` (LCS treats both as path separators) or NUL. PGSS §6.3 forbids
+/// `/` in an event type anyway.
 fn segments(event_type: &[u8]) -> Option<Vec<&[u8]>> {
     if event_type.is_empty() || core::str::from_utf8(event_type).is_err() {
         return None;
     }
     let mut out = Vec::new();
     for seg in event_type.split(|&b| b == b'.') {
-        if seg.is_empty() || seg.iter().any(|&b| b == b'\\' || b == 0) {
+        if seg.is_empty() || seg.iter().any(|&b| b == b'\\' || b == b'/' || b == 0) {
             return None;
         }
         out.try_reserve(1).ok()?;
@@ -529,7 +530,7 @@ pub unsafe extern "C" fn peios_event_policy_close(policy: *mut peios_event_polic
 /// `peios_event_policy_enabled` — is `event_type` at `tier` switched on?
 /// Returns 1 (on: build and emit), 0 (off: build nothing), or `-1` with errno
 /// `EINVAL` for a NULL handle or type, a malformed type (empty, not UTF-8, an
-/// empty segment, or a `\` or NUL in a segment), or an unknown tier. Never
+/// empty segment, or a `\`, `/` or NUL in a segment), or an unknown tier. Never
 /// fails on account of the registry.
 ///
 /// # Safety
@@ -793,6 +794,7 @@ mod tests {
         assert!(segments(b".a").is_none());
         assert!(segments(b"a.").is_none());
         assert!(segments(b"a.b\\c.d").is_none());
+        assert!(segments(b"a.b/c.d").is_none());
         assert!(segments(b"a.b\0.d").is_none());
         assert!(segments(b"a.\xff.d").is_none());
         // A package-name segment the grammar does not admit is still a key name.

@@ -118,7 +118,7 @@ void peios_event_policy_close(peios_event_policy *policy);
  *
  * Returns 1 (on: build and emit), 0 (off: build nothing), or -1 with errno
  * EINVAL for a NULL @policy or @event_type, a malformed type (empty, not UTF-8,
- * an empty segment, or a '\' or NUL in a segment) or an unknown tier. Registry
+ * an empty segment, or a '\', '/' or NUL in a segment) or an unknown tier. Registry
  * trouble never fails a decision; it falls back to the tier.
  */
 int peios_event_policy_enabled(peios_event_policy *policy, const char *event_type,
