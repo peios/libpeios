@@ -19,6 +19,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>		/* ssize_t */
 
 #include <pkm/sd.h>		/* struct kacs_generic_mapping */
 #include <pkm/access.h>		/* kacs_object_type_entry, kacs_node_result */
@@ -50,8 +51,8 @@ struct peios_access_request {
 	size_t		local_claims_len;
 	uint32_t	pip_type;	/* 0 = use the subject's PSB */
 	uint32_t	pip_trust;
-	const void     *audit_context;	/* opaque object id for audit events */
-	size_t		audit_context_len;
+	const void     *audit_context;	/* the guarded object, a PGSS 6.7 map; */
+	size_t		audit_context_len;	/* see peios_audit_context_encode() */
 };
 
 /* Audit outputs [adv], filled if requested. */
@@ -76,6 +77,61 @@ int peios_access_check(const struct peios_access_request *req,
  */
 int peios_access_check_list(const struct peios_access_request *req,
 			    struct kacs_node_result *results, uint32_t count);
+
+/* ---- audit context [adv] ---------------------------------------------- */
+
+/*
+ * A daemon that guards objects of its own names the object it checked, so the
+ * kernel's audit record of the check says what was decided on. The context is
+ * one MessagePack map (PGSS 6.7):
+ *
+ *     {kind: "service", service: {name: "jellyfin"}}
+ *
+ * The kernel copies it into kacs.audit.access.checked as object.kind and
+ * object.<kind>.*, marked fields.attestation.userspace, and fails the check
+ * with EINVAL for any other shape. Both access-check calls validate a
+ * non-NULL audit_context against the kernel's rules before the syscall, so a
+ * malformed one fails there with EINVAL; a non-NULL pointer with a zero
+ * length is refused too.
+ */
+
+/* Which member of a struct peios_audit_field carries its value. */
+enum peios_audit_value_type {
+	PEIOS_AUDIT_STR	 = 0,	/* bytes/len: a UTF-8 string, not NUL-terminated */
+	PEIOS_AUDIT_UINT = 1,	/* scalar */
+	PEIOS_AUDIT_INT	 = 2,	/* scalar, read as a two's-complement int64_t */
+	PEIOS_AUDIT_BOOL = 3,	/* scalar: 0 or 1 */
+	PEIOS_AUDIT_BIN	 = 4,	/* bytes/len: binary, e.g. a SID or GUID */
+};
+
+/* One identifying field of the object, written as object.<kind>.<key>. */
+struct peios_audit_field {
+	const char     *key;		/* NUL-terminated; one kebab-case segment */
+	uint32_t	value_type;	/* enum peios_audit_value_type */
+	uint64_t	scalar;
+	const void     *bytes;
+	size_t		len;
+};
+
+/*
+ * Encode an audit context naming an object of kind @kind by @count @fields,
+ * getxattr-style. @kind and each key are one kebab-case event-name segment,
+ * [a-z][a-z0-9]*(-[a-z0-9]+)*; with no fields the context is {kind: @kind}.
+ * Fails with EINVAL for a bad kind or key, a key given twice, an unknown
+ * value type, a boolean other than 0 or 1, a string that is not UTF-8, or a
+ * context longer than KACS_ACCESS_CHECK_MAX_AUDIT_CONTEXT_LEN bytes. Values
+ * are scalars only: an event field is never nil (it is omitted instead).
+ */
+ssize_t peios_audit_context_encode(const char *kind,
+				   const struct peios_audit_field *fields,
+				   size_t count, void *buf, size_t cap);
+
+/*
+ * Check a context built some other way (e.g. with <peios/msgpack.h>) against
+ * the kernel's rules. Returns 0 if the kernel would accept it; -1 with EINVAL
+ * otherwise, including for NULL or empty input.
+ */
+int peios_audit_context_validate(const void *buf, size_t len);
 
 #ifdef __cplusplus
 }

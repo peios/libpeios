@@ -67,6 +67,14 @@ struct peios_acl_view {
   uint64_t _opaque[4];
 };
 
+struct peios_audit_field {
+  const char *key;
+  uint32_t value_type;
+  uint64_t scalar;
+  const void *bytes;
+  size_t len;
+};
+
 struct peios_event_entry {
   const char *event_type;
   uint16_t event_type_len;
@@ -329,6 +337,14 @@ int peios_acl_parse(const void *acl, size_t len, struct peios_acl_view *out);
 int peios_acl_view_ace(const struct peios_acl_view *a, unsigned int i, struct peios_ace_view *out);
 
 unsigned int peios_acl_view_count(const struct peios_acl_view *a);
+
+ptrdiff_t peios_audit_context_encode(const char *kind,
+                                     const struct peios_audit_field *fields,
+                                     size_t count,
+                                     void *buf,
+                                     size_t cap);
+
+int peios_audit_context_validate(const void *buf, size_t len);
 
 int peios_event_attach(uint32_t cpu_id, uint64_t *capacity_out);
 
