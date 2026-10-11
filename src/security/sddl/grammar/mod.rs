@@ -68,12 +68,12 @@ pub enum AclKind {
     Sacl,
 }
 
-/// The result of [`parse_acl`] — an `AclBuilder` plus the SD control-word
+/// The result of [`parse_acl`] — an optional `AclBuilder` plus the SD control-word
 /// bits the ACL's flag-prefix (`P`/`AR`/`AI`) implies.
 #[derive(Debug, Clone)]
 pub struct ParsedAcl {
-    /// The built-up ACL.
-    pub acl: AclBuilder,
+    /// The built-up ACL, or `None` for `NO_ACCESS_CONTROL` (a NULL ACL).
+    pub acl: Option<AclBuilder>,
     /// Bits to OR into the SD's control word — `SE_DACL_PROTECTED`,
     /// `SE_DACL_AUTO_INHERITED`, etc., depending on `AclKind`. Always
     /// includes the matching `SE_*_PRESENT` bit if the section was given
@@ -213,15 +213,18 @@ pub fn parse(s: &str) -> Result<SdBuilder> {
             }
             'D' => {
                 let parsed = parse_acl(body, AclKind::Dacl)?;
-                builder = builder.dacl(parsed.acl);
-                // SE_DACL_PRESENT comes free from `.dacl(...)`; only the
-                // P/AR/AI bits need to ride through `.control()`.
-                extra_control |= parsed.control & !(SE_DACL_PRESENT);
+                if let Some(acl) = parsed.acl {
+                    builder = builder.dacl(acl);
+                }
+                // Keep PRESENT even for a NULL ACL, whose offset stays zero.
+                extra_control |= parsed.control;
             }
             'S' => {
                 let parsed = parse_acl(body, AclKind::Sacl)?;
-                builder = builder.sacl(parsed.acl);
-                extra_control |= parsed.control & !(SE_SACL_PRESENT);
+                if let Some(acl) = parsed.acl {
+                    builder = builder.sacl(acl);
+                }
+                extra_control |= parsed.control;
             }
             _ => unreachable!("split_sections only yields OGDS"),
         }
@@ -236,8 +239,8 @@ pub fn parse(s: &str) -> Result<SdBuilder> {
 ///
 /// Sections are emitted in canonical order — `O`, `G`, `D`, `S` — and
 /// elided when absent (owner offset 0, etc.). An SD with
-/// `SE_DACL_PRESENT` set but no DACL bytes (NULL DACL) emits a bare
-/// `D:` exactly as Windows does.
+/// `SE_DACL_PRESENT` set but no DACL bytes (NULL DACL) emits
+/// `D:NO_ACCESS_CONTROL`; a bare `D:` represents an empty DACL.
 pub fn format(sd: &SecurityDescriptor<'_>) -> Result<String> {
     let mut out = String::new();
     if let Some(owner) = sd.owner_ref() {
@@ -281,9 +284,15 @@ pub fn format(sd: &SecurityDescriptor<'_>) -> Result<String> {
 
 /// Parse an ACL fragment — the contents of a `D:` or `S:` section, with
 /// no leading prefix. Input shape: `<flags><(ACE)>*` where flags is any
-/// concatenation of `P`, `AR`, `AI`.
+/// concatenation of `P`, `AR`, `AI`. `NO_ACCESS_CONTROL` denotes a NULL ACL
+/// and may accompany these flags, but cannot accompany ACEs.
 pub fn parse_acl(s: &str, kind: AclKind) -> Result<ParsedAcl> {
-    let (flag_bits, mut rest) = parse_acl_flag_prefix(s, kind)?;
+    let (flag_bits, null_acl, mut rest) = parse_acl_flag_prefix(s, kind)?;
+    if null_acl && !rest.is_empty() {
+        return Err(SddlError::Malformed(
+            "NO_ACCESS_CONTROL cannot accompany ACEs",
+        ));
+    }
     let mut acl = AclBuilder::new();
     while !rest.is_empty() {
         let (body, after) = take_paren_group(rest)?;
@@ -296,12 +305,14 @@ pub fn parse_acl(s: &str, kind: AclKind) -> Result<ParsedAcl> {
         AclKind::Dacl => SE_DACL_PRESENT,
         AclKind::Sacl => SE_SACL_PRESENT,
     };
-    Ok(ParsedAcl { acl, control })
+    Ok(ParsedAcl {
+        acl: if null_acl { None } else { Some(acl) },
+        control,
+    })
 }
 
 /// Format an ACL fragment (the contents of a `D:` or `S:` section).
-/// `acl` is `None` for a NULL ACL — emits flag-prefix only (e.g. `P` or
-/// the empty string).
+/// `acl` is `None` for a NULL ACL — emits flags followed by `NO_ACCESS_CONTROL`.
 pub fn format_acl(acl: Option<&Acl<'_>>, kind: AclKind, control: u16) -> Result<String> {
     format_acl_body(acl, kind, control)
 }
@@ -624,14 +635,26 @@ fn split_sections(s: &str) -> Result<Vec<(char, &str)>> {
     Ok(out)
 }
 
-/// Parse the leading flag-prefix of an ACL body (`P`, `AR`, `AI` in any
-/// order) and return the implied control bits + the remainder of the
+/// Parse the leading flag-prefix of an ACL body (`P`, `AR`, `AI` and
+/// `NO_ACCESS_CONTROL`) and return control bits, NULL state and the remainder of the
 /// input (pointing at the first `(` or empty).
-fn parse_acl_flag_prefix(s: &str, kind: AclKind) -> Result<(u16, &str)> {
+fn parse_acl_flag_prefix(s: &str, kind: AclKind) -> Result<(u16, bool, &str)> {
     let bytes = s.as_bytes();
     let mut i = 0usize;
     let mut bits: u16 = 0;
+    let mut null_acl = false;
     while i < bytes.len() && bytes[i] != b'(' {
+        const NULL_ACL: &str = "NO_ACCESS_CONTROL";
+        if s.get(i..i + NULL_ACL.len())
+            .is_some_and(|word| word.eq_ignore_ascii_case(NULL_ACL))
+        {
+            if null_acl {
+                return Err(SddlError::Malformed("duplicate NO_ACCESS_CONTROL"));
+            }
+            null_acl = true;
+            i += NULL_ACL.len();
+            continue;
+        }
         let two = s.get(i..i + 2).map(ascii_upper).unwrap_or_default();
         if two == "AR" {
             bits |= match kind {
@@ -664,7 +687,7 @@ fn parse_acl_flag_prefix(s: &str, kind: AclKind) -> Result<(u16, &str)> {
             s.get(i..i + len).unwrap_or(&s[i..]).to_string(),
         ));
     }
-    Ok((bits, &s[i..]))
+    Ok((bits, null_acl, &s[i..]))
 }
 
 /// Take one balanced `(...)` group at the start of `s`. Returns the
@@ -1011,6 +1034,7 @@ fn format_acl_body(acl: Option<&Acl<'_>>, kind: AclKind, control: u16) -> Result
         out.push_str("AI");
     }
     let Some(acl) = acl else {
+        out.push_str("NO_ACCESS_CONTROL");
         return Ok(out);
     };
     for ace_res in acl.aces_iter() {

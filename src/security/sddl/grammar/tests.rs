@@ -64,7 +64,57 @@ fn dacl_and_sacl_together_round_trip() {
     assert_eq!(round_trip(s), s);
 }
 
-// ---- ACE flags ----
+#[test]
+fn absent_empty_and_null_acls_remain_distinct() {
+    for (section, present) in [('D', SE_DACL_PRESENT), ('S', SE_SACL_PRESENT)] {
+        for (suffix, has_section, has_acl) in [
+            ("", false, false),
+            (":", true, true),
+            (":NO_ACCESS_CONTROL", true, false),
+        ] {
+            let text = if has_section {
+                format!("O:SY{section}{suffix}")
+            } else {
+                "O:SY".into()
+            };
+            let bytes = parse(&text).unwrap().build().unwrap();
+            let sd = SecurityDescriptor::parse(&bytes).unwrap();
+            assert_eq!(sd.control & present != 0, has_section);
+            let acl = if section == 'D' { sd.dacl() } else { sd.sacl() };
+            assert_eq!(acl.is_some(), has_acl);
+            assert_eq!(format(&sd).unwrap(), text);
+            assert_eq!(parse(&format(&sd).unwrap()).unwrap().build().unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
+fn binary_null_acls_format_with_an_explicit_marker() {
+    let bytes = SdBuilder::new()
+        .control(SE_DACL_PRESENT | SE_SACL_PRESENT)
+        .build().unwrap();
+    let text = format(&SecurityDescriptor::parse(&bytes).unwrap()).unwrap();
+    assert_eq!(text, "D:NO_ACCESS_CONTROLS:NO_ACCESS_CONTROL");
+    assert_eq!(parse(&text).unwrap().build().unwrap(), bytes);
+}
+
+#[test]
+fn null_acl_flags_round_trip_without_aces() {
+    for section in ['D', 'S'] {
+        for flags in ["", "P", "AR", "AI", "PARAI"] {
+            let text = format!("{section}:{flags}NO_ACCESS_CONTROL");
+            assert_eq!(round_trip(&text), text);
+            assert_eq!(round_trip(&format!("{section}:no_access_control{flags}")), text);
+        }
+        for bad in [
+            "NO_ACCESS_CONTROL(A;;GA;;;WD)",
+            "NO_ACCESS_CONTROLNO_ACCESS_CONTROL",
+            "NO_ACCESS_CONTRO",
+        ] {
+            assert!(parse(&format!("{section}:{bad}")).is_err());
+        }
+    }
+}
 
 #[test]
 fn ace_flags_round_trip() {
@@ -265,7 +315,7 @@ fn parse_acl_extracts_flag_bits() {
     let parsed = parse_acl("P(A;;FA;;;BA)", AclKind::Dacl).expect("parse");
     assert!(parsed.control & crate::security::sddl::codec::SE_DACL_PROTECTED != 0);
     assert!(parsed.control & crate::security::sddl::codec::SE_DACL_PRESENT != 0);
-    let bytes = parsed.acl.build().expect("build");
+    let bytes = parsed.acl.expect("non-NULL ACL").build().expect("build");
     assert!(!bytes.is_empty());
 }
 
