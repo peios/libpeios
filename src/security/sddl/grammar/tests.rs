@@ -663,7 +663,7 @@ const CONFORMANCE: &str = include_str!("../testdata/sddl-conformance.txt");
 /// Must match the corpus's `# revision:` line. Bumping the corpus without
 /// bumping this constant fails here, which is how a corpus updated on one
 /// side and not the other gets caught.
-const CONFORMANCE_REVISION: u32 = 1;
+const CONFORMANCE_REVISION: u32 = 2;
 
 struct ConformanceCase {
     line: usize,
