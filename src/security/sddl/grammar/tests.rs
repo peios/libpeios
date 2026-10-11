@@ -304,6 +304,109 @@ fn unknown_flag_is_rejected() {
 }
 
 #[test]
+fn non_ascii_acl_flags_return_unknown_flag() {
+    for sddl in ["D:€", "S:😀", "D:Pé", "D:AI€", "S:AR😀", "D:é", "D:Qé"] {
+        assert!(
+            matches!(parse(sddl), Err(SddlError::UnknownFlag(_))),
+            "{sddl}"
+        );
+    }
+}
+
+#[test]
+fn non_ascii_ace_flags_return_unknown_flag() {
+    for flags in ["€", "😀", "CI€", "SA😀", "é", "Xé"] {
+        let sddl = alloc::format!("D:(A;{flags};FA;;;BA)");
+        assert!(
+            matches!(parse(&sddl), Err(SddlError::UnknownFlag(_))),
+            "{sddl}"
+        );
+    }
+}
+
+#[test]
+fn non_ascii_rights_return_unknown_right() {
+    for rights in ["€", "😀", "GA€", "GR😀", "é", "Xé"] {
+        let sddl = alloc::format!("D:(A;;{rights};;;BA)");
+        assert!(
+            matches!(parse(&sddl), Err(SddlError::UnknownRight(_))),
+            "{sddl}"
+        );
+    }
+}
+
+#[test]
+fn acl_fragment_unicode_after_protection_flag_returns_an_error() {
+    for kind in [AclKind::Dacl, AclKind::Sacl] {
+        for flags in ["Pé", "P€", "P😀", "ARé", "AI€", "P€X"] {
+            assert!(
+                matches!(parse_acl(flags, kind), Err(SddlError::UnknownFlag(_))),
+                "{flags}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ace_fragment_unicode_flags_return_an_error() {
+    for flags in ["CI€", "CI😀", "CIé", "X€", "€X"] {
+        let ace = alloc::format!("A;{flags};FA;;;BA");
+        assert!(
+            matches!(parse_ace(&ace), Err(SddlError::UnknownFlag(_))),
+            "{ace}"
+        );
+    }
+}
+
+#[test]
+fn ace_fragment_unicode_rights_return_an_error() {
+    for rights in ["GA€", "GA😀", "GAé", "X€", "€X"] {
+        let ace = alloc::format!("A;;{rights};;;BA");
+        assert!(
+            matches!(parse_ace(&ace), Err(SddlError::UnknownRight(_))),
+            "{ace}"
+        );
+    }
+}
+
+#[test]
+fn ascii_token_diagnostics_and_hex_errors_are_preserved() {
+    assert_eq!(
+        parse("D:Q").unwrap_err(),
+        SddlError::UnknownFlag("Q".into())
+    );
+    assert_eq!(
+        parse("D:PXX").unwrap_err(),
+        SddlError::UnknownFlag("XX".into())
+    );
+    assert_eq!(
+        parse("D:(A;CIX;FA;;;BA)").unwrap_err(),
+        SddlError::UnknownFlag("X".into())
+    );
+    assert_eq!(
+        parse("D:(A;;GRX;;;BA)").unwrap_err(),
+        SddlError::UnknownRight("X".into())
+    );
+    assert_eq!(
+        parse("D:(A;;GA0x€;;;BA)").unwrap_err(),
+        SddlError::BadHex("€".into())
+    );
+    assert_eq!(round_trip("D:pai(A;cioi;gr;;;BA)"), "D:PAI(A;CIOI;GR;;;BA)");
+}
+
+#[test]
+fn unicode_conditional_strings_survive_ascii_acl_and_ace_flags() {
+    let sddl = "D:PAI(XA;CI;FA;;;BU;(@User.title == \"Équipe 東京 😀\"))";
+    assert_eq!(round_trip(sddl), sddl);
+}
+
+#[test]
+fn unicode_resource_attribute_names_and_values_round_trip() {
+    let sddl = "S:PAI(RA;;;;;WD;(\"Département東京\",TS,0x0,\"équipe\",\"😀\"))";
+    assert_eq!(round_trip(sddl), sddl);
+}
+
+#[test]
 fn unknown_right_is_rejected() {
     let err = parse("D:(A;;ZZ;;;BA)").unwrap_err();
     assert!(matches!(err, SddlError::UnknownRight(_)));

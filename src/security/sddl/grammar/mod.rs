@@ -632,11 +632,7 @@ fn parse_acl_flag_prefix(s: &str, kind: AclKind) -> Result<(u16, &str)> {
     let mut i = 0usize;
     let mut bits: u16 = 0;
     while i < bytes.len() && bytes[i] != b'(' {
-        let two = if i + 2 <= bytes.len() {
-            ascii_upper(&s[i..i + 2])
-        } else {
-            String::new()
-        };
+        let two = s.get(i..i + 2).map(ascii_upper).unwrap_or_default();
         if two == "AR" {
             bits |= match kind {
                 AclKind::Dacl => SE_DACL_AUTO_INHERIT_REQ,
@@ -664,7 +660,9 @@ fn parse_acl_flag_prefix(s: &str, kind: AclKind) -> Result<(u16, &str)> {
         }
         // Anything else is an unknown flag code.
         let len = if i + 2 <= bytes.len() { 2 } else { 1 };
-        return Err(SddlError::UnknownFlag(s[i..i + len].to_string()));
+        return Err(SddlError::UnknownFlag(
+            s.get(i..i + len).unwrap_or(&s[i..]).to_string(),
+        ));
     }
     Ok((bits, &s[i..]))
 }
@@ -732,7 +730,10 @@ fn parse_ace_flags(s: &str) -> Result<u8> {
         if i + 2 > bytes.len() {
             return Err(SddlError::UnknownFlag(s[i..].to_string()));
         }
-        let code = ascii_upper(&s[i..i + 2]);
+        let token = s
+            .get(i..i + 2)
+            .ok_or_else(|| SddlError::UnknownFlag(s[i..].to_string()))?;
+        let code = ascii_upper(token);
         let f = vocab::ace_flag_from_code(&code).ok_or(SddlError::UnknownFlag(code))?;
         flags |= f;
         i += 2;
@@ -760,7 +761,10 @@ fn parse_rights(s: &str) -> Result<u32> {
         if i + 2 > bytes.len() {
             return Err(SddlError::UnknownRight(s[i..].to_string()));
         }
-        let code = ascii_upper(&s[i..i + 2]);
+        let token = s
+            .get(i..i + 2)
+            .ok_or_else(|| SddlError::UnknownRight(s[i..].to_string()))?;
+        let code = ascii_upper(token);
         let v = vocab::right_from_code(&code).ok_or(SddlError::UnknownRight(code))?;
         mask |= v;
         i += 2;
