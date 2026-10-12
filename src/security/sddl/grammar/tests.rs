@@ -858,6 +858,6 @@ fn resource_claim_octets_build_kernel_accepted_descriptors() {
         let bytes = parse(&text).unwrap().build().unwrap();
         kacs_core::SecurityDescriptor::parse(&bytes)
             .unwrap_or_else(|e| panic!("{len}-byte octet claim rejected by kernel: {e:?}"));
-        assert_eq!(round_trip(&text), with_explicit_null_acls(&text));
+        assert_eq!(round_trip(&text), text);
     }
 }
