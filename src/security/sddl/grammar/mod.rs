@@ -116,6 +116,8 @@ pub enum SddlError {
     BadGuid(String),
     /// A hex literal couldn't be parsed.
     BadHex(String),
+    /// A decimal access mask is outside the unsigned 32-bit range.
+    BadDecimal(String),
     /// The 7th (payload) field was given on an ACE type that doesn't
     /// accept one.
     UnexpectedPayload(String),
@@ -158,6 +160,7 @@ impl core::fmt::Display for SddlError {
             ),
             SddlError::BadGuid(s) => write!(f, "invalid GUID {s:?}"),
             SddlError::BadHex(s) => write!(f, "invalid hex literal {s:?}"),
+            SddlError::BadDecimal(s) => write!(f, "invalid decimal access mask {s:?}"),
             SddlError::UnexpectedPayload(s) => {
                 write!(f, "ACE type {s:?} does not accept a trailing payload field")
             }
@@ -744,6 +747,13 @@ fn parse_ace_flags(s: &str) -> Result<u8> {
 fn parse_rights(s: &str) -> Result<u32> {
     if s.is_empty() {
         return Ok(0);
+    }
+    // A numeric field is decimal only when every byte is an ASCII digit.
+    // Hex and mnemonic-plus-hex forms continue through the parser below.
+    if s.bytes().all(|byte| byte.is_ascii_digit()) {
+        return s
+            .parse::<u32>()
+            .map_err(|_| SddlError::BadDecimal(s.to_string()));
     }
     let bytes = s.as_bytes();
     let mut mask = 0u32;

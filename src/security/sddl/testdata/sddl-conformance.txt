@@ -22,7 +22,7 @@
 #   libpeios/src/security/sddl/grammar/tests.rs
 #   libp-go/sddl/conformance_test.go
 #
-# revision: 1
+# revision: 2
 #
 # FORMAT
 #   One case per line. Fields are separated by a single TAB. Blank lines and
@@ -85,6 +85,15 @@ rights	SDRCWDWO	0x000f0000
 rights	GA0x6	0x10000006
 rights	0x0	0x00000000
 
+# PEI-1095: an all-ASCII-digit field is an unsigned decimal mask.
+rights	0	0x00000000
+rights	1	0x00000001
+rights	1179817	0x001200a9
+rights	1179785	0x00120089
+rights	4294967295	0xffffffff
+rights	00000117	0x00000075
+rights	0000000000000000000000000000000000000000001	0x00000001
+
 # --- Rejected rights fields -----------------------------------------------
 
 # A hex literal can only close a field: it consumes the rest of it, so
@@ -99,6 +108,16 @@ badrights	FR0x
 # Not a mnemonic in anyone's table.
 badrights	ZZ
 badrights	FRZZ
+
+# Decimal masks do not wrap, accept signs, or mix with mnemonic/hex fields.
+badrights	4294967296
+badrights	99999999999999999999999999999999999999999999999999
+badrights	-1
+badrights	+1
+badrights	12FR
+badrights	FR12
+badrights	12.5
+badrights	１２
 
 # --- SID aliases ----------------------------------------------------------
 #
