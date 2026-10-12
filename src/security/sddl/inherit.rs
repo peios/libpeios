@@ -769,12 +769,12 @@ mod tests {
         assert_eq!(
             got,
             format!(
-                "O:{ME}G:AUD:AI(A;;FA;;;{ME})(A;CIOIID;FA;;;BA)(A;ID;FA;;;{ME})(A;CIOIIOID;GA;;;CO)(A;ID;FR;;;AU)(A;CIOIIOID;GR;;;AU)(A;ID;FR;;;S-1-5-21-1-2-3-1001)"
+                "O:{ME}G:AUD:AI(A;;FA;;;{ME})(A;CIOIID;FA;;;BA)(A;ID;FA;;;{ME})(A;CIOIIOID;GA;;;CO)(A;ID;FR;;;AU)(A;CIOIIOID;GR;;;AU)(A;ID;FR;;;S-1-5-21-1-2-3-1001)S:NO_ACCESS_CONTROL"
             )
         );
         let file = sd(&format!("O:{ME}G:AUD:"));
         let got = text(&reinherit_with(&parent, &file, false, Some(FILE), DACL_SECURITY_INFORMATION).unwrap());
-        assert_eq!(got, format!("O:{ME}G:AUD:AI(A;ID;FA;;;BA)(A;ID;FA;;;{ME})(A;ID;FR;;;AU)(A;ID;FR;;;S-1-5-21-1-2-3-1001)"));
+        assert_eq!(got, format!("O:{ME}G:AUD:AI(A;ID;FA;;;BA)(A;ID;FA;;;{ME})(A;ID;FR;;;AU)(A;ID;FR;;;S-1-5-21-1-2-3-1001)S:NO_ACCESS_CONTROL"));
     }
 
     #[test]
@@ -782,7 +782,7 @@ mod tests {
         let parent = sd("O:BAG:BAD:(A;OICIIOID;GA;;;CO)");
         let child = sd("O:S-1-5-21-1-2-3-1002G:BAD:");
         let got = text(&reinherit_with(&parent, &child, false, Some(FILE), DACL_SECURITY_INFORMATION).unwrap());
-        assert_eq!(got, "O:S-1-5-21-1-2-3-1002G:BAD:AI(A;ID;FA;;;S-1-5-21-1-2-3-1002)");
+        assert_eq!(got, "O:S-1-5-21-1-2-3-1002G:BAD:AI(A;ID;FA;;;S-1-5-21-1-2-3-1002)S:NO_ACCESS_CONTROL");
     }
 
     #[test]
