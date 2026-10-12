@@ -241,9 +241,9 @@ pub fn parse(s: &str) -> Result<SdBuilder> {
 /// Format a parsed self-relative SECURITY_DESCRIPTOR as an SDDL string.
 ///
 /// Sections are emitted in canonical order — `O`, `G`, `D`, `S` — and
-/// elided when absent (owner offset 0, etc.). An SD with
-/// `SE_DACL_PRESENT` set but no DACL bytes (NULL DACL) emits
-/// `D:NO_ACCESS_CONTROL`; a bare `D:` represents an empty DACL.
+/// absent owner/group sections are elided. A PRESENT-clear ACL emits
+/// `NO_ACCESS_CONTROL`, including its P/AR/AI flags. A bare `D:` or `S:`
+/// represents an empty ACL. PRESENT and the ACL offset must agree.
 pub fn format(sd: &SecurityDescriptor<'_>) -> Result<String> {
     let mut out = String::new();
     if let Some(owner) = sd.owner_ref() {
@@ -254,30 +254,31 @@ pub fn format(sd: &SecurityDescriptor<'_>) -> Result<String> {
         out.push_str("G:");
         out.push_str(&format_sid(&group.to_owned()));
     }
-    if sd.control & SE_DACL_PRESENT != 0 {
-        out.push_str("D:");
-        let acl_opt = sd
-            .dacl()
-            .transpose()
-            .map_err(|_| SddlError::Format("DACL did not parse"))?;
-        out.push_str(&format_acl_body(
-            acl_opt.as_ref(),
-            AclKind::Dacl,
-            sd.control,
-        )?);
+    if (sd.control & SE_DACL_PRESENT != 0) != (sd.dacl_off != 0)
+        || (sd.control & SE_SACL_PRESENT != 0) != (sd.sacl_off != 0)
+    {
+        return Err(SddlError::Format("ACL presence and offset disagree"));
     }
-    if sd.control & SE_SACL_PRESENT != 0 {
-        out.push_str("S:");
-        let acl_opt = sd
-            .sacl()
-            .transpose()
-            .map_err(|_| SddlError::Format("SACL did not parse"))?;
-        out.push_str(&format_acl_body(
-            acl_opt.as_ref(),
-            AclKind::Sacl,
-            sd.control,
-        )?);
-    }
+    out.push_str("D:");
+    let acl_opt = sd
+        .dacl()
+        .transpose()
+        .map_err(|_| SddlError::Format("DACL did not parse"))?;
+    out.push_str(&format_acl_body(
+        acl_opt.as_ref(),
+        AclKind::Dacl,
+        sd.control,
+    )?);
+    out.push_str("S:");
+    let acl_opt = sd
+        .sacl()
+        .transpose()
+        .map_err(|_| SddlError::Format("SACL did not parse"))?;
+    out.push_str(&format_acl_body(
+        acl_opt.as_ref(),
+        AclKind::Sacl,
+        sd.control,
+    )?);
     Ok(out)
 }
 
@@ -304,10 +305,12 @@ pub fn parse_acl(s: &str, kind: AclKind) -> Result<ParsedAcl> {
         rest = after;
     }
     let mut control = flag_bits;
-    control |= match kind {
-        AclKind::Dacl => SE_DACL_PRESENT,
-        AclKind::Sacl => SE_SACL_PRESENT,
-    };
+    if !null_acl {
+        control |= match kind {
+            AclKind::Dacl => SE_DACL_PRESENT,
+            AclKind::Sacl => SE_SACL_PRESENT,
+        };
+    }
     Ok(ParsedAcl {
         acl: if null_acl { None } else { Some(acl) },
         control,
