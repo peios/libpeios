@@ -850,3 +850,14 @@ fn ru_is_builtin_not_domain_relative() {
         "S-1-5-32-554"
     );
 }
+
+#[test]
+fn resource_claim_octets_build_kernel_accepted_descriptors() {
+    for len in 0..9 {
+        let text = alloc::format!("S:(RA;;;;;WD;(\"Bytes\",TX,0x0,#{}))", "ab".repeat(len));
+        let bytes = parse(&text).unwrap().build().unwrap();
+        kacs_core::SecurityDescriptor::parse(&bytes)
+            .unwrap_or_else(|e| panic!("{len}-byte octet claim rejected by kernel: {e:?}"));
+        assert_eq!(round_trip(&text), with_explicit_null_acls(&text));
+    }
+}

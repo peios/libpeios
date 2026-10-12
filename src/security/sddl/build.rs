@@ -191,11 +191,11 @@ impl AceBuilder {
     ///
     /// # Errors
     /// [`Error::Encode`] if the body is too large for the ACE to fit its
-    /// 16-bit `AceSize` field (body length must be ≤ 65531).
+    /// 16-bit, DWORD-aligned `AceSize` field (body length must be ≤ 65528).
     pub fn raw(ace_type: u8, body: impl Into<Vec<u8>>) -> Result<Self> {
         let body = body.into();
-        if body.len() > u16::MAX as usize - 4 {
-            return Err(Error::Encode("ACE body exceeds 65531 bytes"));
+        if body.len() > (u16::MAX as usize & !3) - 4 {
+            return Err(Error::Encode("ACE body exceeds 65528 bytes"));
         }
         Ok(AceBuilder {
             ace_type,
@@ -367,12 +367,13 @@ impl AceBuilder {
         self
     }
 
-    /// Total wire size of this ACE: 4-byte header plus the body.
+    /// Total wire size, including zero padding to the required DWORD boundary.
     fn encoded_len(&self) -> usize {
-        4 + match &self.body {
+        let len = 4 + match &self.body {
             AceBody::MaskSid { sid, .. } => 4 + sid.encoded_len(),
             AceBody::Raw(body) => body.len(),
-        }
+        };
+        (len + 3) & !3
     }
 
     /// True if this ACE type requires `ACL_REVISION_DS` — the object-type
@@ -397,6 +398,7 @@ impl AceBuilder {
             }
             AceBody::Raw(body) => out.extend_from_slice(body),
         }
+        out.resize(size, 0);
         out
     }
 }
@@ -666,7 +668,8 @@ mod tests {
             u16::from_le_bytes([bytes[2], bytes[3]]) as usize,
             bytes.len()
         );
-        assert_eq!(&bytes[4..], &body[..]);
+        assert_eq!(&bytes[4..4 + body.len()], &body[..]);
+        assert_eq!(&bytes[4 + body.len()..], &[0, 0]);
     }
 
     #[test]
@@ -694,6 +697,27 @@ mod tests {
             AceBuilder::raw(ACE_TYPE_ACCESS_ALLOWED, huge),
             Err(Error::Encode(_))
         ));
+    }
+
+    #[test]
+    fn resource_attribute_aces_pad_every_payload_length() {
+        // PCDS ACE format requires AceSize % 4 == 0. Resource claims may end
+        // on any byte boundary (unlike the already-padded artx payload).
+        for len in 0..8 {
+            let claim = ClaimAttribute::new(
+                "Bytes",
+                alloc::vec![ClaimValue::Octet(alloc::vec![0xab; len])],
+            );
+            let entry = claim.encode().unwrap();
+            let ace = AceBuilder::resource_attribute(&claim).unwrap().build();
+            let payload_start = 8 + WellKnownSid::Everyone.to_sid().encoded_len();
+            assert_eq!(ace.len() % 4, 0);
+            assert_eq!(u16::from_le_bytes([ace[2], ace[3]]) as usize, ace.len());
+            assert_eq!(&ace[payload_start..payload_start + entry.len()], &entry);
+            assert!(ace[payload_start + entry.len()..].iter().all(|b| *b == 0));
+        }
+        assert_eq!(AceBuilder::raw(0x12, alloc::vec![0; 65528]).unwrap().build().len(), 65532);
+        assert!(AceBuilder::raw(0x12, alloc::vec![0; 65529]).is_err());
     }
 
     #[test]

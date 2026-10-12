@@ -40,7 +40,8 @@ const RECEIVE_CONTROL_MAX: usize =
 pub const PEIOS_SOCKET_MSG_TRUNCATED: c_uint = 0x1;
 /// `PEIOS_SOCKET_MSG_CTRUNCATED` — ancillary data did not fit (`MSG_CTRUNC`):
 /// more descriptors than `fd_cap`, or a token with no room. The kernel has
-/// already closed whatever it could not deliver.
+/// already closed whatever it could not deliver; libpeios also closes and
+/// reports handles beyond the caller's capacity that fit in the control buffer.
 pub const PEIOS_SOCKET_MSG_CTRUNCATED: c_uint = 0x2;
 
 /// `struct peios_socket_message` — what a received message carried alongside
@@ -169,6 +170,7 @@ fn parse_control(buf: &[u8]) -> impl Iterator<Item = ParsedCmsg<'_>> {
 unsafe fn deliver_control(buf: &[u8], msg: &mut peios_socket_message) {
     msg.token_fd = -1;
     msg.fd_count = 0;
+    msg.flags = 0;
     for cmsg in parse_control(buf) {
         let ints = cmsg.data.chunks_exact(size_of::<c_int>());
         match (cmsg.level, cmsg.kind) {
@@ -181,6 +183,7 @@ unsafe fn deliver_control(buf: &[u8], msg: &mut peios_socket_message) {
                         // At most one per message by the kernel's contract; a
                         // second is not ours to keep.
                         libc::close(fd);
+                        msg.flags |= PEIOS_SOCKET_MSG_CTRUNCATED;
                     }
                 }
             }
@@ -192,6 +195,7 @@ unsafe fn deliver_control(buf: &[u8], msg: &mut peios_socket_message) {
                         msg.fd_count += 1;
                     } else {
                         libc::close(fd);
+                        msg.flags |= PEIOS_SOCKET_MSG_CTRUNCATED;
                     }
                 }
             }
@@ -321,7 +325,6 @@ pub unsafe extern "C" fn peios_socket_recv_message(
     let delivered_control =
         unsafe { core::slice::from_raw_parts(control.as_ptr().cast::<u8>(), delivered) };
     deliver_control(delivered_control, msg);
-    msg.flags = 0;
     if hdr.msg_flags & libc::MSG_TRUNC != 0 {
         msg.flags |= PEIOS_SOCKET_MSG_TRUNCATED;
     }
@@ -358,6 +361,29 @@ pub unsafe extern "C" fn peios_socket_peer_pidfd(sock_fd: c_int) -> c_int {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excess_received_descriptors_are_closed_and_reported() {
+        unsafe {
+            let mut fds = [-1; 2];
+            assert_eq!(libc::pipe(fds.as_mut_ptr()), 0);
+            let control = build_send_control(-1, &fds);
+            let mut kept = -1;
+            let mut msg = peios_socket_message {
+                token_fd: -1,
+                fds: &mut kept,
+                fd_cap: 1,
+                fd_count: 0,
+                flags: 0,
+            };
+            deliver_control(&control, &mut msg);
+            assert_eq!(msg.fd_count, 1);
+            assert_eq!(kept, fds[0]);
+            assert_eq!(msg.flags, PEIOS_SOCKET_MSG_CTRUNCATED);
+            assert_eq!(libc::fcntl(fds[1], libc::F_GETFD), -1);
+            assert_eq!(libc::close(kept), 0);
+        }
+    }
 
     #[test]
     fn alignment_matches_the_kernel_macros() {
