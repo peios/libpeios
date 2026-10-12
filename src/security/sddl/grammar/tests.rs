@@ -20,18 +20,6 @@ fn round_trip(sddl: &str) -> String {
     format(&sd).expect("format")
 }
 
-// Expected canonical defaults for the older ACE/SID-focused cases below.
-// NULL/empty binary semantics are checked independently by the shared vectors.
-fn with_explicit_null_acls(text: &str) -> String {
-    let mut out = text.to_string();
-    if !text.contains("D:") {
-        let at = out.find("S:").unwrap_or(out.len());
-        out.insert_str(at, "D:NO_ACCESS_CONTROL");
-    }
-    if !text.contains("S:") { out.push_str("S:NO_ACCESS_CONTROL"); }
-    out
-}
-
 // ---- Top-level SD parse/format ----
 
 #[test]
@@ -42,44 +30,45 @@ fn empty_input_is_an_error() {
 #[test]
 fn owner_and_group_round_trip() {
     let s = "O:SYG:BA";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn raw_sid_literal_round_trips() {
     // A domain-user SID that has no two-letter alias.
     let s = "O:S-1-5-21-1234-5678-9012-1001";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn simple_dacl_round_trips() {
     let s = "O:SYG:BAD:(A;;FA;;;BA)(A;;FR;;;BU)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn protected_dacl_emits_p_flag() {
     let s = "D:P(A;;FA;;;SY)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn auto_inherited_dacl_emits_ai_flag() {
     let s = "D:AI(A;;FA;;;SY)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn dacl_and_sacl_together_round_trip() {
     let s = "D:(A;;FA;;;BA)S:(AU;FA;FA;;;WD)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn null_and_empty_acls_match_the_kernel_contract() {
-    // Shared with libp-go. Expected control words come from PCDS, independently
-    // of either userspace codec; the kernel parser is the acceptance oracle.
+    // Shared with libp-go and peios-go. Expected control words come from PCDS,
+    // independently of any userspace codec; the kernel parser is the
+    // acceptance oracle.
     for line in include_str!("../testdata/null-acl-vectors.tsv").lines() {
         if line.starts_with('#') || line.is_empty() { continue; }
         let fields: alloc::vec::Vec<_> = line.split('\t').collect();
@@ -120,17 +109,19 @@ fn format_rejects_inconsistent_acl_presence() {
     }
 }
 
+// ---- ACE flags ----
+
 #[test]
 fn ace_flags_round_trip() {
     // Container-inherit + object-inherit + no-propagate.
     let s = "D:(A;CIOINP;FA;;;BA)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn audit_flags_round_trip() {
     let s = "S:(AU;SAFA;FA;;;BA)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
@@ -139,7 +130,7 @@ fn inherited_flag_is_emitted_on_round_trip() {
     // kernel sets it), but our parser accepts ID for symmetry; the
     // formatter emits it when the bit is set on the wire ACE.
     let s = "D:(A;ID;FA;;;BA)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 // ---- Rights ----
@@ -147,13 +138,13 @@ fn inherited_flag_is_emitted_on_round_trip() {
 #[test]
 fn generic_rights_round_trip() {
     let s = "D:(A;;GA;;;SY)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn standard_rights_round_trip() {
     let s = "D:(A;;SDRCWDWO;;;SY)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
@@ -179,7 +170,7 @@ fn hex_rights_parse_and_format_round_trip() {
     // Parse and reformat — the formatter will emit the largest matching
     // composite first; 0x1234 has no composite match, so it round-trips
     // verbatim (lowercase).
-    assert_eq!(round_trip(s), "D:(A;;0x1234;;;SY)S:NO_ACCESS_CONTROL");
+    assert_eq!(round_trip(s), "D:(A;;0x1234;;;SY)");
 }
 
 // ---- Object ACEs ----
@@ -188,19 +179,19 @@ fn hex_rights_parse_and_format_round_trip() {
 fn object_ace_round_trips_with_guids() {
     let s = "D:(OA;;GR;11111111-2222-3333-4444-555555555555;\
              66666666-7777-8888-9999-aaaaaaaaaaaa;BA)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn object_ace_round_trips_with_one_guid() {
     let s = "D:(OA;;GR;11111111-2222-3333-4444-555555555555;;BA)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn object_ace_with_no_guids_still_works() {
     let s = "D:(OA;;GR;;;BA)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
@@ -216,13 +207,13 @@ fn object_guid_on_simple_ace_is_rejected() {
 fn mandatory_label_round_trips() {
     // High IL, no-write-up policy.
     let s = "S:(ML;;NW;;;HI)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
 fn scoped_policy_id_round_trips() {
     let s = "S:(SP;;;;;SY)";
-    assert_eq!(round_trip(s), with_explicit_null_acls(s));
+    assert_eq!(round_trip(s), s);
 }
 
 #[test]
@@ -235,14 +226,14 @@ fn alarms_round_trip() {
         "S:(XL;SA;FA;;;BU;(@User.dept == \"Eng\"))",
         "S:(ZL;SA;GR;11111111-2222-3333-4444-555555555555;;BU;(Exists @User.dept))",
     ] {
-        assert_eq!(round_trip(s), with_explicit_null_acls(s));
+        assert_eq!(round_trip(s), s);
     }
 }
 
 #[test]
 fn trust_label_and_access_filter_round_trip() {
     for s in ["S:(TL;;RC;;;S-1-19-1024-8192)", "S:(FL;;FA;;;WD;(Member_of {SID(BA)}))"] {
-        assert_eq!(round_trip(s), with_explicit_null_acls(s));
+        assert_eq!(round_trip(s), s);
     }
 }
 
@@ -267,21 +258,21 @@ fn conditional_ace_simple_compare_round_trips() {
     let sddl = "D:(XA;;FA;;;BU;(@User.title == \"VP\"))";
     let got = round_trip(sddl);
     // Operator spacing is canonical: single space either side.
-    assert_eq!(got, with_explicit_null_acls(sddl));
+    assert_eq!(got, sddl);
 }
 
 #[test]
 fn conditional_ace_membership_round_trips() {
     let sddl = "D:(XA;;FA;;;BU;(Member_of {SID(BA)}))";
     let got = round_trip(sddl);
-    assert_eq!(got, with_explicit_null_acls(sddl));
+    assert_eq!(got, sddl);
 }
 
 #[test]
 fn conditional_ace_logical_combination_round_trips() {
     let sddl = "D:(XA;;FA;;;BU;(Exists @User.dept && @User.clearance >= 3))";
     let got = round_trip(sddl);
-    assert_eq!(got, with_explicit_null_acls(sddl));
+    assert_eq!(got, sddl);
 }
 
 #[test]
@@ -289,7 +280,7 @@ fn conditional_ace_object_round_trips() {
     let sddl = "D:(ZA;;GR;11111111-2222-3333-4444-555555555555;;\
                 BU;(@User.level == 10))";
     let got = round_trip(sddl);
-    assert_eq!(got, with_explicit_null_acls(sddl));
+    assert_eq!(got, sddl);
 }
 
 // ---- Resource attribute ----
@@ -297,19 +288,19 @@ fn conditional_ace_object_round_trips() {
 #[test]
 fn resource_attribute_int64_round_trips() {
     let sddl = "S:(RA;;;;;WD;(\"Confidentiality\",TI,0x0,3))";
-    assert_eq!(round_trip(sddl), with_explicit_null_acls(sddl));
+    assert_eq!(round_trip(sddl), sddl);
 }
 
 #[test]
 fn resource_attribute_string_multi_value_round_trips() {
     let sddl = "S:(RA;;;;;WD;(\"Dept\",TS,0x0,\"sales\",\"eng\"))";
-    assert_eq!(round_trip(sddl), with_explicit_null_acls(sddl));
+    assert_eq!(round_trip(sddl), sddl);
 }
 
 #[test]
 fn resource_attribute_bool_round_trips() {
     let sddl = "S:(RA;;;;;WD;(\"IsManaged\",TB,0x0,1))";
-    assert_eq!(round_trip(sddl), with_explicit_null_acls(sddl));
+    assert_eq!(round_trip(sddl), sddl);
 }
 
 // ---- Fragment-level helpers ----
@@ -445,19 +436,19 @@ fn ascii_token_diagnostics_and_hex_errors_are_preserved() {
         parse("D:(A;;GA0x€;;;BA)").unwrap_err(),
         SddlError::BadHex("€".into())
     );
-    assert_eq!(round_trip("D:pai(A;cioi;gr;;;BA)"), "D:PAI(A;CIOI;GR;;;BA)S:NO_ACCESS_CONTROL");
+    assert_eq!(round_trip("D:pai(A;cioi;gr;;;BA)"), "D:PAI(A;CIOI;GR;;;BA)");
 }
 
 #[test]
 fn unicode_conditional_strings_survive_ascii_acl_and_ace_flags() {
     let sddl = "D:PAI(XA;CI;FA;;;BU;(@User.title == \"Équipe 東京 😀\"))";
-    assert_eq!(round_trip(sddl), with_explicit_null_acls(sddl));
+    assert_eq!(round_trip(sddl), sddl);
 }
 
 #[test]
 fn unicode_resource_attribute_names_and_values_round_trip() {
     let sddl = "S:PAI(RA;;;;;WD;(\"Département東京\",TS,0x0,\"équipe\",\"😀\"))";
-    assert_eq!(round_trip(sddl), with_explicit_null_acls(sddl));
+    assert_eq!(round_trip(sddl), sddl);
 }
 
 #[test]
@@ -631,7 +622,7 @@ fn programmatic_build_then_format() {
         .unwrap();
     let parsed = SecurityDescriptor::parse(&sd).unwrap();
     let s = format(&parsed).unwrap();
-    assert_eq!(s, "O:SYG:BAD:(A;CI;GA;;;BA)(A;;GR;;;BU)S:NO_ACCESS_CONTROL");
+    assert_eq!(s, "O:SYG:BAD:(A;CI;GA;;;BA)(A;;GR;;;BU)");
 }
 
 // ---- parse_sid (public string → Sid) ----
@@ -837,7 +828,7 @@ fn conformance_sid_aliases() {
         // And through the whole pipeline, which is the round trip the
         // ticket asks for: text in, wire bytes, text out.
         let text = alloc::format!("O:{}", case.arg);
-        assert_eq!(round_trip(&text), with_explicit_null_acls(&text), "corpus line {}", case.line);
+        assert_eq!(round_trip(&text), text, "corpus line {}", case.line);
     }
     assert!(checked > 0, "no sid cases in the corpus");
 }

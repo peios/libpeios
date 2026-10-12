@@ -241,9 +241,11 @@ pub fn parse(s: &str) -> Result<SdBuilder> {
 /// Format a parsed self-relative SECURITY_DESCRIPTOR as an SDDL string.
 ///
 /// Sections are emitted in canonical order — `O`, `G`, `D`, `S` — and
-/// absent owner/group sections are elided. A PRESENT-clear ACL emits
-/// `NO_ACCESS_CONTROL`, including its P/AR/AI flags. A bare `D:` or `S:`
-/// represents an empty ACL. PRESENT and the ACL offset must agree.
+/// absent sections are elided. A PRESENT-clear (NULL) ACL is elided too
+/// unless it carries P/AR/AI flags, which it keeps as `D:PNO_ACCESS_CONTROL`
+/// and the like; a descriptor with nothing else to show formats as
+/// `D:NO_ACCESS_CONTROL`. A bare `D:` or `S:` represents an empty ACL.
+/// PRESENT and the ACL offset must agree.
 pub fn format(sd: &SecurityDescriptor<'_>) -> Result<String> {
     let mut out = String::new();
     if let Some(owner) = sd.owner_ref() {
@@ -259,27 +261,37 @@ pub fn format(sd: &SecurityDescriptor<'_>) -> Result<String> {
     {
         return Err(SddlError::Format("ACL presence and offset disagree"));
     }
-    out.push_str("D:");
     let acl_opt = sd
         .dacl()
         .transpose()
         .map_err(|_| SddlError::Format("DACL did not parse"))?;
-    out.push_str(&format_acl_body(
-        acl_opt.as_ref(),
-        AclKind::Dacl,
-        sd.control,
-    )?);
-    out.push_str("S:");
+    push_acl_section(&mut out, "D:", acl_opt.as_ref(), AclKind::Dacl, sd.control)?;
     let acl_opt = sd
         .sacl()
         .transpose()
         .map_err(|_| SddlError::Format("SACL did not parse"))?;
-    out.push_str(&format_acl_body(
-        acl_opt.as_ref(),
-        AclKind::Sacl,
-        sd.control,
-    )?);
+    push_acl_section(&mut out, "S:", acl_opt.as_ref(), AclKind::Sacl, sd.control)?;
+    if out.is_empty() {
+        // SDDL has no empty string; this is the NULL DACL it describes.
+        out.push_str("D:NO_ACCESS_CONTROL");
+    }
     Ok(out)
+}
+
+/// Append one ACL section, eliding a NULL ACL that carries no flags.
+fn push_acl_section(
+    out: &mut String,
+    prefix: &str,
+    acl: Option<&Acl<'_>>,
+    kind: AclKind,
+    control: u16,
+) -> Result<()> {
+    let body = format_acl_body(acl, kind, control)?;
+    if acl.is_some() || body != "NO_ACCESS_CONTROL" {
+        out.push_str(prefix);
+        out.push_str(&body);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
