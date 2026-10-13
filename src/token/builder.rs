@@ -413,8 +413,10 @@ pub unsafe extern "C" fn peios_token_builder_privileges(
 
 /// `peios_token_builder_type` — set token type + impersonation level. The
 /// level is a ceiling on everything derived from the token, primary tokens
-/// included; a primary below `KACS_IMLEVEL_IMPERSONATION` is refused by the
-/// kernel (Kernel TRM §3.5.1).
+/// included. Choose it deliberately: CreateToken accepts all four levels,
+/// including Identification and Anonymous, without changing the primary's
+/// own identity. Older kernels reject primary levels below Impersonation.
+/// DuplicateToken retains its separate floor for primary results (§3.2.4).
 #[no_mangle]
 pub unsafe extern "C" fn peios_token_builder_type(
     b: *mut peios_token_builder,

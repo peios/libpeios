@@ -151,6 +151,10 @@ void peios_token_builder_add_group(peios_token_builder *b, const void *sid,
 				   size_t len, uint32_t attrs);
 void peios_token_builder_privileges(peios_token_builder *b, uint64_t present,
 				    uint64_t enabled);
+/* Choose the level deliberately: it bounds all identities derived from this
+ * token, including a primary. CreateToken accepts all four levels; a low
+ * primary ceiling limits peers without changing the process's own identity.
+ * Older kernels reject primary levels below Impersonation. */
 void peios_token_builder_type(peios_token_builder *b, uint8_t type, uint8_t imp_level);
 void peios_token_builder_integrity(peios_token_builder *b, uint32_t rid);
 void peios_token_builder_session(peios_token_builder *b, uint64_t session_id);
@@ -293,7 +297,9 @@ int peios_token_adjust_groups(int fd, const struct kacs_group_entry *entries,
 int peios_token_reset_groups(int fd);
 
 /* Duplicate this token; returns a new fd. @type is KACS_TOKEN_TYPE_*, @imp_level
- * KACS_IMLEVEL_*. */
+ * KACS_IMLEVEL_*. The level cannot exceed the source's level. A primary result
+ * must be at least Impersonation, even though CreateToken can mint lower
+ * primary ceilings. */
 int peios_token_duplicate(int fd, uint32_t access, uint8_t type, uint8_t imp_level);
 
 /* Create a restricted (filtered) token; returns a new fd [adv]. */
