@@ -11,7 +11,7 @@
 use core::ffi::{c_int, c_ulong, c_void};
 
 use peios_uapi::{
-    kacs_query_args, KACS_IOC_QUERY, KACS_TOKEN_CLASS_IMPERSONATION_LEVEL,
+    kacs_query_args, KACS_IOC_QUERY, KACS_TOKEN_CLASS_GUID, KACS_TOKEN_CLASS_IMPERSONATION_LEVEL,
     KACS_TOKEN_CLASS_INTEGRITY_LEVEL, KACS_TOKEN_CLASS_INTERACTIVITY_SCOPE,
     KACS_TOKEN_CLASS_PRIVILEGES, KACS_TOKEN_CLASS_STATISTICS, KACS_TOKEN_CLASS_TYPE,
     KACS_TOKEN_CLASS_USER,
@@ -144,6 +144,12 @@ pub unsafe extern "C" fn peios_token_statistics(
     query_into(fd, KACS_TOKEN_CLASS_STATISTICS, out)
 }
 
+/// `peios_token_guid` — the immutable raw GUID used by KMES.
+#[no_mangle]
+pub unsafe extern "C" fn peios_token_guid(fd: c_int, guid_out: *mut u8) -> c_int {
+    query_into::<[u8; 16]>(fd, KACS_TOKEN_CLASS_GUID, guid_out.cast())
+}
+
 /// `peios_token_integrity` — the integrity-level RID
 /// (`KACS_TOKEN_CLASS_INTEGRITY_LEVEL`).
 ///
@@ -216,6 +222,10 @@ mod tests {
             assert_eq!(errno(), libc::EINVAL);
 
             *libc::__errno_location() = 0;
+            assert_eq!(peios_token_guid(-1, core::ptr::null_mut()), -1);
+            assert_eq!(errno(), libc::EINVAL);
+
+            *libc::__errno_location() = 0;
             assert_eq!(peios_token_statistics(-1, core::ptr::null_mut()), -1);
             assert_eq!(errno(), libc::EINVAL);
 
@@ -249,5 +259,13 @@ mod tests {
         );
         assert_eq!(KACS_TOKEN_CLASS_INTERACTIVITY_SCOPE, 0x08);
         assert_eq!(KACS_TOKEN_CLASS_STATISTICS, 0x0b);
+    }
+
+    #[test]
+    fn guid_query_preserves_output_on_bad_fd() {
+        let mut out = [0xa5; 16];
+        assert_eq!(unsafe { peios_token_guid(-1, out.as_mut_ptr()) }, -1);
+        assert_eq!(errno(), libc::EBADF);
+        assert_eq!(out, [0xa5; 16]);
     }
 }

@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "kacs-core"
 version = "0.1.0"
-source = "git+https://github.com/peios/pkm.git?rev=b5519e6da3ecd4ce854c6299af6844f0a6ce05dd#b5519e6da3ecd4ce854c6299af6844f0a6ce05dd"
+source = "git+https://github.com/peios/pkm.git?rev=c8e323ee29b67efa8d8b9ee1279b5a9fd4168056#c8e323ee29b67efa8d8b9ee1279b5a9fd4168056"
 dependencies = [
  "peios-uapi",
 ]
@@ -18,7 +18,7 @@ checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libpeios"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "kacs-core",
  "libc",
@@ -37,4 +37,4 @@ dependencies = [
 [[package]]
 name = "peios-uapi"
 version = "0.1.0"
-source = "git+https://github.com/peios/pkm.git?rev=b5519e6da3ecd4ce854c6299af6844f0a6ce05dd#b5519e6da3ecd4ce854c6299af6844f0a6ce05dd"
+source = "git+https://github.com/peios/pkm.git?rev=c8e323ee29b67efa8d8b9ee1279b5a9fd4168056#c8e323ee29b67efa8d8b9ee1279b5a9fd4168056"
