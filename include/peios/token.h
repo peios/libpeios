@@ -273,6 +273,9 @@ int	peios_token_type(int fd, uint32_t *out);			/* CLASS_TYPE */
 int	peios_token_impersonation_level(int fd, uint32_t *out);	/* CLASS_IMPERSONATION_LEVEL: the ceiling on every token, primary included */
 int	peios_token_interactivity_scope(int fd, uint32_t *out);	/* CLASS_INTERACTIVITY_SCOPE */
 int	peios_token_statistics(int fd, struct peios_token_statistics *out);	/* CLASS_STATISTICS */
+/* Immutable token GUID, in the same raw byte order as KMES event headers.
+ * Requires TOKEN_QUERY. guid_out must point to 16 writable bytes. */
+int	peios_token_guid(int fd, uint8_t guid_out[16]);		/* CLASS_GUID */
 int	peios_token_integrity(int fd, uint32_t *level_rid_out);		/* CLASS_INTEGRITY_LEVEL */
 int	peios_token_privileges(int fd, struct peios_privilege_set *out);	/* CLASS_PRIVILEGES */
 

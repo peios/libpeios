@@ -813,6 +813,8 @@ int peios_token_duplicate(int fd, uint32_t access, uint8_t token_type, uint8_t i
 
 int peios_token_get_linked(int fd);
 
+int peios_token_guid(int fd, uint8_t *guid_out);
+
 int peios_token_impersonate(int fd);
 
 int peios_token_impersonate_peer(int conn_fd);
