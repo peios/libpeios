@@ -14,7 +14,7 @@ name = "dev.peios.libpeios-source"
 command = '''
 set -eu
 
-PKM_REV=b5519e6da3ecd4ce854c6299af6844f0a6ce05dd
+PKM_REV=c8e323ee29b67efa8d8b9ee1279b5a9fd4168056
 PKM_SHORT=$(printf %.7s "$PKM_REV")
 export CARGO_HOME=/tmp/cargo-libpeios-vendor
 mkdir -p "$CARGO_HOME" "$PEKIT_OUT"
